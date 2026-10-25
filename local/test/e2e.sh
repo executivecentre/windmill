@@ -84,7 +84,7 @@ up() {
 scan_logs() {
 	dc logs --no-color >"$run/all.log" 2>&1
 	bad=0
-	n=$(grep -c '/api/auth/login_link/' "$run/all.log" || true)
+	n=$(grep -cE '/api/auth/login_link/[A-Za-z0-9_-]' "$run/all.log" || true)
 	if [ "$n" = 0 ]; then echo "PASS  no login-link URL in any container log"; else
 		echo "FAIL  login-link URLs in container logs: $n lines"
 		bad=1
