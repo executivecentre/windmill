@@ -1,0 +1,27 @@
+# Entra group → Windmill workspace mapping. Copy to local/group-mappings.yaml (git-ignored) and
+# replace the keys with the Object IDs of your own Entra groups (Entra admin center → Groups →
+# the group → Overview → Object ID). The gateway refuses to start if this file is invalid.
+#
+# Each key is one Entra group; nested group membership counts (Graph transitiveMemberOf).
+#   workspace  existing Windmill workspace id; the gateway never creates workspaces, and never
+#              grants access to `admins`
+#   role       admin | developer | operator — when several groups map to one workspace, the
+#              highest role wins; there is no way to grant instance superadmin
+#   groups     optional Windmill groups in that workspace; the gateway creates them if missing
+#              and manages membership only for users it provisioned (`all` and `wm_deployers`
+#              are reserved)
+#
+# A user who matches no mapping is denied sign-in. Removing a user from every mapped group
+# disables their workspace memberships at the next sign-in or reconcile run.
+group_mappings:
+  3f2c6a1e-8d4b-4c71-9a5e-1b7f0d2e9c41:
+    workspace: engineering
+    role: developer
+    groups: [backend]
+  7a9e4d02-15c3-4f8b-b6a1-c0d3e8f25a77:
+    workspace: engineering
+    role: admin
+  c41b8f6d-2e7a-4d95-8c13-5f60a9b7e2d8:
+    workspace: operations
+    role: operator
+    groups: [oncall]
