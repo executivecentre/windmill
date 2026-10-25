@@ -1,0 +1,67 @@
+# Caddy front for windmill-custom. Values come from the caddy service environment:
+#   PUBLIC_HOST          host name users reach (no scheme, no port)
+#   CADDY_TLS            "internal" (Caddy's local CA), an ACME e-mail address (public
+#                        certificate via automatic HTTPS), or "/certs/cert.pem /certs/key.pem"
+#   ADMIN_ALLOWED_CIDRS  space-separated networks allowed to use the break-glass password login
+{
+	admin off
+	# Handler error entries carry the request URI, which for /api/auth/login_link/* and
+	# /sso/callback is a credential. There is no access log at all.
+	log default {
+		exclude http.log.error
+	}
+}
+
+{$PUBLIC_HOST} {
+	tls {$CADDY_TLS}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# `route` keeps these in written order instead of Caddy's directive order.
+	route {
+		# AGPLv3 §13: corresponding source of this modified server.
+		handle_path /source/* {
+			root * /srv/source
+			file_server browse
+		}
+
+		handle /sso/* {
+			reverse_proxy entra_gateway:8080
+		}
+
+		# Accounts and login links are created only by the gateway, which calls
+		# windmill_server:8000 directly.
+		@gateway_only path /api/users/login_links /api/users/create /api/users/overwrite
+		respond @gateway_only 403
+
+		# Break-glass password login, reachable from the admin networks only.
+		@password_login_api {
+			path /api/auth/login
+			not remote_ip {$ADMIN_ALLOWED_CIDRS}
+		}
+		respond @password_login_api 403
+		@password_login_page {
+			path /user/login
+			query local=1
+			not remote_ip {$ADMIN_ALLOWED_CIDRS}
+		}
+		respond @password_login_page 403
+
+		# Exact path: /user/login_link_expired must keep reaching Windmill.
+		@sso_login {
+			path /user/login
+			not query local=1
+		}
+		redir @sso_login /sso/login?{query} 302
+
+		@lsp path /ws/*
+		reverse_proxy @lsp windmill_extra:3000
+
+		reverse_proxy windmill_server:8000
+	}
+}
