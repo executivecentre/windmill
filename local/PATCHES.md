@@ -101,3 +101,63 @@ Left untouched (not one of the four quotas):
   `dist/`, `backups/` and the operator's `group-mappings.yaml`.
 - **Re-apply**: if upstream moves or removes its `local/` rule, keep `!/local/` immediately after
   whatever rule would match the root `local/` directory.
+
+### `backend/windmill-api-groups/src/groups.rs`
+
+- **Change**: body of `_check_nb_of_groups` replaced with `Ok(())`; parameter renamed `_db`.
+- **Reason**: removes the CE cap of 3 non-native groups. The call site in `create_group`
+  (`#[cfg(not(feature = "enterprise"))]`) is left as is, as are reserved group names and
+  `check_name_conflict`.
+- **Re-apply**: keep the function signature, replace its body with `Ok(())`. If upstream renames
+  it or inlines the count, neutralise the count/threshold check only.
+
+### `backend/windmill-api-workspaces/src/workspaces.rs`
+
+- **Change**: bodies of `_check_nb_of_workspaces` and `_check_nb_of_archived_workspaces` replaced
+  with `Ok(())`; parameters renamed `_db`.
+- **Reason**: removes the CE caps of 2 non-`admins` workspaces and 1 archived workspace. Call
+  sites (`create_workspace`, the fork creation path, `archive_workspace`, `unarchive_workspace`)
+  stay. `CLOUD_HOSTED` quotas, `CREATE_WORKSPACE_REQUIRE_SUPERADMIN`, `DISABLE_WORKSPACE_FORK`,
+  `MAX_FORK_DEPTH`, the `admins` membership rule and name validation are untouched.
+- **Re-apply**: same as above, per function.
+
+### `backend/windmill-api/src/oauth2_oss.rs`
+
+- **Change**: body of `check_nb_of_user` replaced with `Ok(())`; parameter renamed `_db`.
+- **Reason**: consistency (10 SSO / 50 users cap). No OSS code calls it, so this is a no-op.
+- **Re-apply**: replace the body with `Ok(())`.
+
+### `frontend/src/lib/components/sessions/sessionState.svelte.ts`
+
+- **Change**: removed the `CE_MAX_NON_ADMIN_WORKSPACES` guard that threw before materialising a
+  pending fork, and the now-unused `enterpriseLicense` import.
+- **Reason**: UI mirror of the removed backend workspace cap.
+- **Re-apply**: delete the block that compares the non-`admins` workspace count with
+  `CE_MAX_NON_ADMIN_WORKSPACES`; drop `enterpriseLicense` from the import if nothing else uses it.
+  The `enterpriseLicense` store itself is not changed.
+
+### `frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte`
+
+- **Change**: removed `CE_MAX_NON_ADMIN_WORKSPACES`, `nonAdminWorkspaceCount`,
+  `ceWorkspaceCapReached`, `forkAffordanceOpen` and `showForkUpsell`, the disabled
+  "Workspace limit reached" row, and the unused `enterpriseLicense` import. `showCreateFork` is now
+  the former `forkAffordanceOpen` condition.
+- **Reason**: UI mirror of the removed backend workspace cap.
+- **Re-apply**: make `showCreateFork` equal to the structural gate (`allowCreateFork &&
+  forksGateOpen && (onCreateFork || onRequestCreateFork) && root`) and delete the upsell branch.
+
+### `frontend/src/lib/components/AuthSettings.svelte`
+
+- **Change**: the SSO tab content (the "Limited to 10 SSO users" alert, the
+  require-preexisting-user toggle, all built-in and custom SSO provider forms and the
+  "Add custom SSO client" popover) is replaced by one `Alert` stating that SSO is provided by the
+  Microsoft Entra ID gateway at `/sso/login`. Imports and helpers used only by that tab
+  (`OktaSetting`, `Auth0Setting`, `KeycloakSetting`, `CustomSso`, `AuthentikSetting`,
+  `AutheliaSetting`, `PocketIdSetting`, `KanidmSetting`, `ZitadelSetting`, `NextcloudSetting`,
+  `Popover`, the `sso*` state and handlers) are removed because the frontend type check runs with
+  `noUnusedLocals` and `--threshold warning`.
+- **Reason**: OSS `build_oauth_clients`/`list_logins` return no login clients, so that form
+  configured nothing. The OAuth (resource connect) and SCIM/SAML tabs and every other
+  license-gated control are unchanged.
+- **Re-apply**: replace the body of the `{#if tab === 'sso'}` branch (after the
+  `SettingsPageHeader`) with the alert, then remove whatever the type check reports as unused.

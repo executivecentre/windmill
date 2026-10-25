@@ -3,16 +3,6 @@
 	import { Alert, Button, Tab, Tabs } from './common'
 
 	import OAuthSetting from '$lib/components/OAuthSetting.svelte'
-	import OktaSetting from './OktaSetting.svelte'
-	import Auth0Setting from './Auth0Setting.svelte'
-	import KeycloakSetting from './KeycloakSetting.svelte'
-	import CustomSso from './CustomSso.svelte'
-	import AuthentikSetting from '$lib/components/AuthentikSetting.svelte'
-	import AutheliaSetting from '$lib/components/AutheliaSetting.svelte'
-	import PocketIdSetting from '$lib/components/PocketIdSetting.svelte'
-	import KanidmSetting from '$lib/components/KanidmSetting.svelte'
-	import ZitadelSetting from '$lib/components/ZitadelSetting.svelte'
-	import NextcloudSetting from '$lib/components/NextcloudSetting.svelte'
 	import CustomOauth from './CustomOauth.svelte'
 	import Password from './Password.svelte'
 	import { capitalize, type Item } from '$lib/utils'
@@ -26,7 +16,6 @@
 	import AzureOauthSettings from './AzureOauthSettings.svelte'
 	import Tooltip from './Tooltip.svelte'
 	import { tick } from 'svelte'
-	import { Popover } from './meltComponents'
 	import SettingsPageHeader from './settings/SettingsPageHeader.svelte'
 	import oauthConnectRegistry from '$oauth_connect_registry'
 
@@ -185,10 +174,6 @@
 	let customNameInput = $state<HTMLInputElement>()
 	let dropdownOpen = $state(false)
 
-	let ssoPopoverOpen = $state(false)
-	let ssoClientName = $state('')
-	let ssoNameInput = $state<HTMLInputElement>()
-
 	function createOAuthClient(name: string) {
 		if (oauths && name) {
 			// Create a new object to ensure the new item is added at the end
@@ -234,42 +219,6 @@
 		} else if (event.key === 'Escape') {
 			event.preventDefault()
 			cancelCustomOAuthForm()
-		}
-	}
-
-	function handleSsoPopoverOpen() {
-		ssoPopoverOpen = true
-		ssoClientName = ''
-		// Focus the input on next tick
-		tick().then(() => {
-			ssoNameInput?.focus()
-		})
-	}
-
-	function submitSsoClient() {
-		const trimmedName = ssoClientName.trim()
-		if (trimmedName && oauths) {
-			// Create a new object to ensure the new item is added at the end
-			const newOauths = { ...oauths }
-			newOauths[trimmedName] = { id: '', secret: '', login_config: {} }
-			oauths = newOauths
-			ssoPopoverOpen = false
-			ssoClientName = ''
-		}
-	}
-
-	function cancelSsoPopover() {
-		ssoPopoverOpen = false
-		ssoClientName = ''
-	}
-
-	function handleSsoKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
-			event.preventDefault()
-			submitSsoClient()
-		} else if (event.key === 'Escape') {
-			event.preventDefault()
-			cancelSsoPopover()
 		}
 	}
 
@@ -364,125 +313,11 @@
 				description="Configure SSO providers to let users authenticate using their existing identity provider credentials. To test SSO, save the settings and try to login in an incognito window."
 				link="https://www.windmill.dev/docs/misc/setup_oauth#sso"
 			/>
-			{#if !$enterpriseLicense || $enterpriseLicense.endsWith('_pro')}
-				<Alert type="info" title="Limited to 10 SSO users">
-					Without EE, the number of SSO users is limited to 10. SCIM/SAML is available on EE
-				</Alert>
-				<div class="mb-2"></div>
-			{/if}
-			<div class="flex gap-2 py-4">
-				<Toggle
-					options={{
-						right: 'Require users to have been added manually to Windmill to sign in through SSO'
-					}}
-					bind:checked={requirePreexistingUserForOauth}
-				/>
-			</div>
-			<div class="flex flex-col gap-4 py-4">
-				<OAuthSetting name="google" bind:value={oauths['google']} />
-				<OAuthSetting name="microsoft" bind:value={oauths['microsoft']} />
-				<OktaSetting bind:value={oauths['okta']} />
-				<Auth0Setting bind:value={oauths['auth0']} />
-				<OAuthSetting name="github" bind:value={oauths['github']} />
-				<OAuthSetting name="gitlab" bind:value={oauths['gitlab']} />
-				<OAuthSetting name="jumpcloud" bind:value={oauths['jumpcloud']} />
-				<KeycloakSetting bind:value={oauths['keycloak']} />
-				<AuthentikSetting bind:value={oauths['authentik']} />
-				<AutheliaSetting bind:value={oauths['authelia']} />
-				<PocketIdSetting bind:value={oauths['pocketid']} />
-				<KanidmSetting bind:value={oauths['kanidm']} />
-				<ZitadelSetting bind:value={oauths['zitadel']} />
-				<NextcloudSetting bind:value={oauths['nextcloud']} {baseUrl} />
-				{#each Object.keys(oauths) as k}
-					{#if !['authelia', 'authentik', 'google', 'microsoft', 'github', 'gitlab', 'jumpcloud', 'okta', 'auth0', 'keycloak', 'slack', 'kanidm', 'zitadel', 'nextcloud', 'pocketid'].includes(k) && oauths[k] && 'login_config' in oauths[k]}
-						{#if oauths[k]}
-							<div class="flex flex-col gap-2 pb-4">
-								<div class="flex flex-row items-center gap-2">
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="text-xs font-semibold text-emphasis">{k}</label>
-									<Button
-										variant="subtle"
-										destructive
-										iconOnly
-										unifiedSize="sm"
-										startIcon={{ icon: X }}
-										onclick={() => {
-											if (oauths) {
-												delete oauths[k]
-												oauths = { ...oauths }
-											}
-										}}
-									/>
-								</div>
-								<div class="p-4 rounded bg-surface-tertiary shadow-sm">
-									<label class="block pb-6">
-										<span class="text-primary font-semibold text-xs">Custom Name</span>
-										<input
-											type="text"
-											placeholder="Custom Name"
-											bind:value={oauths[k]['display_name']}
-										/>
-									</label>
-									<label class="block pb-6">
-										<span class="text-primary font-semibold text-xs">Client Id</span>
-										<input type="text" placeholder="Client Id" bind:value={oauths[k]['id']} />
-									</label>
-									<label for="{k}_client_secret_sso" class="block pb-6">
-										<span class="text-primary font-semibold text-xs">Client Secret</span>
-										<Password
-											id="{k}_client_secret_sso"
-											placeholder="Client Secret"
-											bind:password={oauths[k]['secret']}
-										/>
-									</label>
-									{#if !windmillBuiltins.includes(k) && k != 'slack'}
-										<CustomSso bind:login_config={oauths[k]['login_config']} />
-									{/if}
-								</div>
-							</div>
-						{/if}
-					{/if}
-				{/each}
-			</div>
-			<div class="flex justify-start py-4">
-				<Popover placement="bottom-start" bind:isOpen={ssoPopoverOpen} onClose={cancelSsoPopover}>
-					{#snippet trigger()}
-						<Button
-							variant="default"
-							hover="yo"
-							size="sm"
-							endIcon={{ icon: Plus }}
-							disabled={!$enterpriseLicense}
-							onclick={handleSsoPopoverOpen}
-						>
-							Add custom SSO client {!$enterpriseLicense ? '(requires ee)' : ''}
-						</Button>
-					{/snippet}
-					{#snippet content()}
-						<div class="flex flex-col gap-2 p-4 min-w-64">
-							<div class="flex gap-2">
-								<input
-									type="text"
-									placeholder="Custom SSO client name"
-									bind:value={ssoClientName}
-									onkeydown={handleSsoKeydown}
-									class="flex-1 px-3 py-2 text-sm border rounded"
-									bind:this={ssoNameInput}
-								/>
-								<Button
-									size="sm"
-									variant="accent"
-									disabled={!ssoClientName.trim()}
-									onclick={submitSsoClient}
-								>
-									Add
-								</Button>
-								<Button size="sm" variant="subtle" onclick={cancelSsoPopover}>Cancel</Button>
-							</div>
-						</div>
-					{/snippet}
-				</Popover>
-			</div>
+			<!-- Local patch (local/PATCHES.md): this build has no built-in SSO providers. -->
+			<Alert type="info" title="SSO is provided by the Microsoft Entra ID gateway">
+				Users sign in at /sso/login. Access, workspaces and roles come from the gateway's Entra
+				group mappings, not from these settings.
+			</Alert>
 		{:else if tab === 'oauth'}
 			<SettingsPageHeader
 				title="OAuth"
