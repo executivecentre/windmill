@@ -101,6 +101,18 @@ else
 	fail "password login refused from a non-admin address (-> $code, want 403)"
 fi
 
+codes=$(dc exec -T windmill_server sh -c 's=$(cat /run/secrets/windmill_superadmin_secret)
+	c() { curl -sk -o /dev/null -w "%{http_code} " --connect-to "$h:443:caddy:443" "$@"; }
+	h=$1
+	c -H "Authorization: Bearer $s" "https://$h/api/users/whoami"
+	c --cookie "token=$s" "https://$h/api/users/whoami"
+	c "https://$h/api/users/whoami?token=$s"' _ "$host" 2>/dev/null || echo 000)
+if [ "$codes" = "403 403 403 " ]; then
+	pass "SUPERADMIN_SECRET refused from a non-admin address (header, cookie, query -> 403)"
+else
+	fail "SUPERADMIN_SECRET refused from a non-admin address (got: $codes, want 403 403 403)"
+fi
+
 code=$(dc exec -T windmill_server curl -s -o /dev/null -w '%{http_code}' -X POST \
 	-H 'Content-Type: application/json' -d '{"email":"admin@windmill.dev","password":"changeme"}' \
 	http://localhost:8000/api/auth/login 2>/dev/null || echo 000)

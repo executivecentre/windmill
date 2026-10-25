@@ -218,3 +218,25 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 - **Re-apply**: keep `RedactedUri` as the only thing that formats request URIs for logs; extend
   its prefix list and query masking. If upstream moves `RedactedUri` or stops using it in
   `tracing_init.rs`, apply the same masking wherever the request URI is logged.
+
+### `frontend/src/routes/(root)/(logged)/user/(user)/login/+page.svelte`
+
+- **Change**: unless the URL has `local=1`, the page calls
+  `window.location.replace('/sso/login?<same query>')` (adding the `rd` it takes from
+  `localStorage`, if the query has none) and skips its own session check and redirects.
+- **Reason**: Caddy sends full page loads of `/user/login` to the gateway, but sign-out, session
+  expiry and the 404 handler reach this route by client-side navigation, which never reaches
+  Caddy, and would leave Entra users on a password form they cannot use. The route file is
+  patched, not `Login.svelte`, which is also embedded in approval and public-app pages.
+- **Re-apply**: at the top of the route's script, before anything navigates, redirect every
+  visit without `local=1` to `/sso/login` with the query string.
+
+### `frontend/src/lib/logoutKit.ts`
+
+- **Change**: `logout()` clears the Windmill session as before, then does
+  `window.location.replace('/sso/logout')` instead of `goto('/user/login')` and a toast; the
+  `sendUserToast` import is dropped. `logoutWithRedirect` is unchanged (it lands on
+  `/user/login`, which now goes to the gateway).
+- **Reason**: the gateway's `/sso/logout` also ends the Entra session. Without it, the sign-in
+  that follows a sign-out would complete silently against the live Entra session.
+- **Re-apply**: make the user-initiated sign-out end with a full navigation to `/sso/logout`.

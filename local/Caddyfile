@@ -24,6 +24,16 @@
 
 	# `route` keeps these in written order instead of Caddy's directive order.
 	route {
+		# SUPERADMIN_SECRET grants instance-superadmin rights. Only the gateway uses it, and it
+		# calls windmill_server:8000 directly, so through Caddy it is refused outside the admin
+		# networks, in each place Windmill reads a token from. A missing secret file makes this
+		# refuse every token-less request (fail closed).
+		@superadmin_secret {
+			not remote_ip {$ADMIN_ALLOWED_CIDRS}
+			expression `{header.Authorization} == "Bearer " + ph(req, "file./run/secrets/windmill_superadmin_secret") || {cookie.token} == ph(req, "file./run/secrets/windmill_superadmin_secret") || {query.token} == ph(req, "file./run/secrets/windmill_superadmin_secret")`
+		}
+		respond @superadmin_secret 403
+
 		# AGPLv3 §13: corresponding source of this modified server.
 		handle_path /source/* {
 			root * /srv/source

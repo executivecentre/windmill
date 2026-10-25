@@ -158,6 +158,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       # - ./local/certs:/certs:ro   # for CADDY_TLS="/certs/cert.pem /certs/key.pem"
+    # Read by the Caddyfile to refuse SUPERADMIN_SECRET from outside ADMIN_ALLOWED_CIDRS.
+    secrets:
+      - windmill_superadmin_secret
 
 secrets:
   postgres_password:

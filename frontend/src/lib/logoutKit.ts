@@ -3,7 +3,6 @@
 
 import { goto } from '$lib/navigation'
 import { clearUser } from './logout'
-import { sendUserToast } from './toast'
 
 export async function logoutWithRedirect(rd?: string): Promise<void> {
 	console.log('logoutWithRedirect', rd)
@@ -21,8 +20,9 @@ export async function logoutWithRedirect(rd?: string): Promise<void> {
 	}
 }
 
+// A full page load: the gateway's /sso/logout also ends the Entra session, without which the
+// next visit would sign the user straight back in.
 export async function logout(): Promise<void> {
 	await clearUser()
-	goto(`/user/login`)
-	sendUserToast('you have been logged out')
+	window.location.replace('/sso/logout')
 }

@@ -31,6 +31,17 @@
 	if (rdFromStorage) {
 		localStorage.removeItem('rd')
 	}
+	// Sign-in goes through the Entra gateway; only the break-glass form (`?local=1`) renders here.
+	// Caddy redirects full page loads, but sign-out and session expiry reach this route by
+	// client-side navigation, which never reaches Caddy.
+	const local = page.url.searchParams.get('local') === '1'
+	if (!local) {
+		const params = new URLSearchParams(page.url.search)
+		if (rdFromStorage && !params.has('rd')) {
+			params.set('rd', rdFromStorage)
+		}
+		window.location.replace(`/sso/login?${params}`)
+	}
 	const rawRd = page.url.searchParams.get('rd') ?? rdFromStorage
 	// Reduce same-origin full URLs (e.g. the page URL persisted from
 	// PublicApp.svelte's /a/[...path]) to relative paths so the post-login
@@ -132,12 +143,14 @@
 		firstTime = await (await fetch('/api/auth/is_first_time_setup')).json()
 	}
 
-	try {
-		setLicense()
-		redirectIfNecessary()
-		checkFirstTimeSetup()
-	} catch {
-		clearStores()
+	if (local) {
+		try {
+			setLicense()
+			redirectIfNecessary()
+			checkFirstTimeSetup()
+		} catch {
+			clearStores()
+		}
 	}
 </script>
 
