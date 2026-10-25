@@ -6,6 +6,7 @@
 #   local/test/e2e.sh          up + test
 #   local/test/e2e.sh up       build mock-entra, generate test material, start the project
 #   local/test/e2e.sh test     smoke.sh, the E2E driver, then log scans for credentials
+#   local/test/e2e.sh browser  real-browser check of the SPA sign-in/sign-out paths (after test)
 #   local/test/e2e.sh down     stop and remove the project's containers (volumes are kept)
 #
 # Needs windmill-custom:local and windmill-entra:local (local/scripts/build.sh).
@@ -135,16 +136,29 @@ test_all() {
 	return "$status"
 }
 
+# Needs frontend/node_modules (Playwright) and a Chromium for it; CHROME_EXE picks a specific one.
+# Uses host port 8443 to stand in for mock-entra:8443.
+browser() {
+	pw="$root/frontend/node_modules/playwright"
+	if [ ! -d "$pw" ]; then
+		echo "e2e.sh: browser needs Playwright from frontend/node_modules (npm ci in frontend/)" >&2
+		exit 1
+	fi
+	E2E_BASE="$base" PW_PATH="$pw" MOCK_PORT="$(env_value MOCK_ENTRA_BIND_PORT)" RUN_DIR="$root/$run" \
+		node local/test/e2e_browser.js
+}
+
 case "${1:-all}" in
 up) up ;;
 test) test_all ;;
+browser) browser ;;
 down) dc down ;;
 all)
 	up
 	test_all
 	;;
 *)
-	echo "usage: $0 [up|test|down|all]" >&2
+	echo "usage: $0 [up|test|browser|down|all]" >&2
 	exit 2
 	;;
 esac
