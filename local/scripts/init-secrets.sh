@@ -21,6 +21,7 @@ gen postgres_password openssl rand -hex 32
 gen windmill_superadmin_secret openssl rand -hex 32
 gen entra_gateway_db_password openssl rand -hex 32
 gen cookie_key openssl rand -hex 32
+gen windmill_admin_password openssl rand -base64 33
 gen windmill_database_url sh -c 'printf "postgres://postgres:%s@db:5432/windmill?sslmode=disable" "$(cat postgres_password)"'
 gen gateway_database_url sh -c 'printf "postgres://entra_gateway:%s@db:5432/entra_gateway?sslmode=disable" "$(cat entra_gateway_db_password)"'
 

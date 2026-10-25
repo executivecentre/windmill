@@ -30,6 +30,7 @@ gen_material() {
 		[ -s "$s/$f" ] || openssl rand -hex 32 >"$s/$f"
 	done
 	[ -s "$s/entra_client_secret" ] || openssl rand -hex 24 >"$s/entra_client_secret"
+	[ -s "$s/windmill_admin_password" ] || openssl rand -base64 33 >"$s/windmill_admin_password"
 	printf 'postgres://postgres:%s@db:5432/windmill?sslmode=disable' "$(cat "$s/postgres_password")" >"$s/windmill_database_url"
 	printf 'postgres://entra_gateway:%s@db:5432/entra_gateway?sslmode=disable' "$(cat "$s/entra_gateway_db_password")" >"$s/gateway_database_url"
 
@@ -77,6 +78,8 @@ up() {
 	wait_for "Windmill through Caddy" 240 curl -fsS --cacert "$run/caddy-root.crt" "$base/api/version"
 	wait_for "entra_gateway healthy" 180 sh -c \
 		'[ "$(docker inspect --format "{{.State.Health.Status}}" "$1")" = healthy ]' _ "$(dc ps -q entra_gateway)"
+	STACK_ENV_FILE="$env_file" STACK_COMPOSE_FILES="$files" ADMIN_PASSWORD_FILE="$run/secrets/windmill_admin_password" \
+		sh local/scripts/set-admin-password.sh
 	echo "e2e.sh: windmill-custom-e2e is up at $base"
 }
 

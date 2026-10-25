@@ -62,11 +62,12 @@ All commands run from the repository root.
    `local/scripts/up.sh db windmill_server windmill_worker windmill_worker_native windmill_extra caddy`.
    `/sso/*` then shows a "single sign-on is unavailable" page. Windmill and the gateway apply
    their own database migrations at start.
-7. **Break-glass admin.** From an address in `ADMIN_ALLOWED_CIDRS`, open
-   `${PUBLIC_BASE_URL}/user/login?local=1` and sign in as `admin@windmill.dev` with password
-   `changeme`. **Change the password immediately** (at least 12 characters), in the user
-   settings or with `POST /api/users/setpassword`. Then create the workspaces your mapping file
-   names. The gateway never creates workspaces.
+7. **Break-glass admin.** Windmill seeds `admin@windmill.dev` with the password `changeme` in
+   every new database. `local/scripts/set-admin-password.sh` replaces it with
+   `local/secrets/windmill_admin_password` (it does nothing once the seeded password stops
+   working). Then, from an address in `ADMIN_ALLOWED_CIDRS`, open
+   `${PUBLIC_BASE_URL}/user/login?local=1`, sign in as `admin@windmill.dev` with that password,
+   and create the workspaces your mapping file names. The gateway never creates workspaces.
 8. **Check.** `local/scripts/smoke.sh` should print only PASS lines, plus one SKIP if the
    gateway is not running yet.
 

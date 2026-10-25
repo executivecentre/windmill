@@ -15,6 +15,7 @@ openssl rand -hex 32 > postgres_password
 openssl rand -hex 32 > windmill_superadmin_secret
 openssl rand -hex 32 > entra_gateway_db_password
 openssl rand -hex 32 > cookie_key
+openssl rand -base64 33 > windmill_admin_password
 printf 'postgres://postgres:%s@db:5432/windmill?sslmode=disable' "$(cat postgres_password)" > windmill_database_url
 printf 'postgres://entra_gateway:%s@db:5432/entra_gateway?sslmode=disable' "$(cat entra_gateway_db_password)" > gateway_database_url
 ```
@@ -27,6 +28,7 @@ printf 'postgres://entra_gateway:%s@db:5432/entra_gateway?sslmode=disable' "$(ca
 | `entra_gateway_db_password` | db (init), gateway | Password of the `entra_gateway` role. Read by the db init scripts on a fresh volume. |
 | `gateway_database_url` | gateway | Connection URL using `entra_gateway_db_password` |
 | `cookie_key` | gateway | 32 random bytes, hex: encrypts the short-lived sign-in state cookie |
+| `windmill_admin_password` | `set-admin-password.sh` | Password of the break-glass account `admin@windmill.dev`. Not mounted into any container: the script sends it to Windmill once, replacing the seeded `changeme`. |
 | `entra_client_secret` | gateway | The client secret **value** from the Entra app registration. Not generated, so write it yourself: `printf '%s' '<value>' > entra_client_secret` |
 
 ## Rotation
@@ -34,6 +36,10 @@ printf 'postgres://entra_gateway:%s@db:5432/entra_gateway?sslmode=disable' "$(ca
 - **`windmill_superadmin_secret` or `cookie_key`:** write a new value, then recreate
   `windmill_server` and `entra_gateway` (`local/scripts/up.sh --force-recreate windmill_server
   entra_gateway`). Rotating `cookie_key` only cancels sign-ins that are in progress.
+- **`windmill_admin_password`:** the file is applied only while the seeded password still
+  works. To change the password later, sign in as the break-glass admin from an
+  `ADMIN_ALLOWED_CIDRS` address and change it in the user settings, then store the new value
+  here.
 - **`entra_client_secret`:** create a new secret in Entra, write it here, recreate
   `entra_gateway`, then delete the old secret in Entra.
 - **Database passwords:** the files are read only when the volume is created. Change the

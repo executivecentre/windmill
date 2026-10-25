@@ -101,6 +101,14 @@ else
 	fail "password login refused from a non-admin address (-> $code, want 403)"
 fi
 
+code=$(dc exec -T windmill_server curl -s -o /dev/null -w '%{http_code}' -X POST \
+	-H 'Content-Type: application/json' -d '{"email":"admin@windmill.dev","password":"changeme"}' \
+	http://localhost:8000/api/auth/login 2>/dev/null || echo 000)
+case "$code" in
+4??) pass "admin@windmill.dev refuses the seeded password (-> $code)" ;;
+*) fail "admin@windmill.dev refuses the seeded password (-> $code; run local/scripts/set-admin-password.sh)" ;;
+esac
+
 # --- AGPL source offer -------------------------------------------------------------------------
 out=$(req GET /source/)
 if [ "${out%% *}" = 200 ] && grep -q 'windmill-custom-src-' "$tmp/body"; then
