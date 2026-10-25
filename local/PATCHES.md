@@ -127,6 +127,35 @@ Left untouched (not one of the four quotas):
 - **Reason**: consistency (10 SSO / 50 users cap). No OSS code calls it, so this is a no-op.
 - **Re-apply**: replace the body with `Ok(())`.
 
+### `backend/windmill-api/src/users_oss.rs`
+
+- **Change**: the three `#[cfg(not(feature = "private"))]` stubs that returned "not implemented"
+  are implemented with runtime `sqlx::query*` (no `query!` macros, so `backend/.sqlx` is
+  unchanged):
+  - `hash_password`: refuses passwords shorter than 12 characters (`BadRequest`), then hashes
+    with the shared `Argon2::default()` (Argon2id, PHC string). Also covers `reset_password`.
+  - `create_user`: superadmin only (`require_super_admin`; the route wrapper already refuses job
+    tokens). Email is trimmed and lowercased, checked with `VALID_EMAIL` and `usr_accepts_email`.
+    `login_type` defaults to `password` and must match `[a-z][a-z0-9_-]{0,49}`; `password`
+    requires a password, every other type (`entra`, `pending_oauth`, ...) must not carry one and
+    stores a NULL hash. `has_any_account` and the `password` primary key both map to 409, so
+    concurrent duplicates leave one row. Instance username follows `automate_username_creation`
+    (reuse the `pending_user` reservation or generate one, then drop the reservation; NULL when
+    automation is off). Inserts with `verified = true`, writes the `users.add_global` audit entry
+    (no-op in OSS) and sends the `UserAdded` instance webhook. `skip_email` is ignored: OSS sends
+    no welcome email.
+  - `set_password`: the caller must be the target or a superadmin. Only `password` and
+    `pending_oauth` rows are updated (the latter becomes `password`); identity-provider accounts
+    get 400 and never gain a password. Session deletion and MCP grant revocation stay in the
+    route wrappers in `windmill-api/src/users.rs`, which are unchanged.
+- **Reason**: OSS has no way to create users or set passwords otherwise; the Entra gateway and
+  the break-glass admin need both.
+- **Tests**: `backend/windmill-api-integration-tests/tests/oss_user_management.rs` (new file),
+  including an ungated port of `test_set_password_revokes_mcp_oauth_grants`, whose upstream copy
+  in `tests/users.rs` is gated on `enterprise` + `private`.
+- **Re-apply**: if upstream changes the stub signatures, adapt the bodies; if upstream ever ships
+  an OSS implementation, drop this patch and the new test file and rerun the tests against it.
+
 ### `frontend/src/lib/components/sessions/sessionState.svelte.ts`
 
 - **Change**: removed the `CE_MAX_NON_ADMIN_WORKSPACES` guard that threw before materialising a
