@@ -106,11 +106,14 @@ codes=$(dc exec -T windmill_server sh -c 's=$(cat /run/secrets/windmill_superadm
 	h=$1
 	c -H "Authorization: Bearer $s" "https://$h/api/users/whoami"
 	c --cookie "token=$s" "https://$h/api/users/whoami"
-	c "https://$h/api/users/whoami?token=$s"' _ "$host" 2>/dev/null || echo 000)
-if [ "$codes" = "403 403 403 " ]; then
-	pass "SUPERADMIN_SECRET refused from a non-admin address (header, cookie, query -> 403)"
+	c "https://$h/api/users/whoami?token=$s"
+	c -H "Cookie: token=x; token=$s" "https://$h/api/users/whoami"
+	c -H "Cookie: token=$(printf %s "$s" | od -An -tx1 | tr -d " \n" | sed "s/../%&/g")" \
+		"https://$h/api/users/whoami"' _ "$host" 2>/dev/null || echo 000)
+if [ "$codes" = "403 403 403 403 403 " ]; then
+	pass "SUPERADMIN_SECRET refused from a non-admin address (header, cookie, query, repeated, encoded -> 403)"
 else
-	fail "SUPERADMIN_SECRET refused from a non-admin address (got: $codes, want 403 403 403)"
+	fail "SUPERADMIN_SECRET refused from a non-admin address (got: $codes, want 403 x5)"
 fi
 
 code=$(dc exec -T windmill_server curl -s -o /dev/null -w '%{http_code}' -X POST \

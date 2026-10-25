@@ -26,11 +26,13 @@
 	route {
 		# SUPERADMIN_SECRET grants instance-superadmin rights. Only the gateway uses it, and it
 		# calls windmill_server:8000 directly, so through Caddy it is refused outside the admin
-		# networks, in each place Windmill reads a token from. A missing secret file makes this
-		# refuse every token-less request (fail closed).
+		# networks. Windmill reads the last of repeated cookies and percent-decodes cookie names
+		# and values, so raw headers are searched, and a percent sign in a cookie name or in a
+		# `token` cookie (neither has one legitimately) is refused too. With the secret file
+		# missing, every request from outside the admin networks is refused (fail closed).
 		@superadmin_secret {
 			not remote_ip {$ADMIN_ALLOWED_CIDRS}
-			expression `{header.Authorization} == "Bearer " + ph(req, "file./run/secrets/windmill_superadmin_secret") || {cookie.token} == ph(req, "file./run/secrets/windmill_superadmin_secret") || {query.token} == ph(req, "file./run/secrets/windmill_superadmin_secret")`
+			expression `{header.Authorization}.contains(ph(req, "file./run/secrets/windmill_superadmin_secret")) || {header.Cookie}.contains(ph(req, "file./run/secrets/windmill_superadmin_secret")) || {http.request.uri.query}.contains(ph(req, "file./run/secrets/windmill_superadmin_secret")) || {query.token} == ph(req, "file./run/secrets/windmill_superadmin_secret") || {header.Cookie}.matches("(^|[;,])[ ]*([^=;,]*%[^=;,]*=|token=[^;,]*%)")`
 		}
 		respond @superadmin_secret 403
 
