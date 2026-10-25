@@ -91,6 +91,22 @@ Left untouched (not one of the four quotas):
 - `WORKSPACE_MAX_QUEUED_JOBS` (an instance setting, not an edition limit).
 - Unrelated strings (AI token limit message, a dbt test assertion, DOM typings, UI help text).
 
+### Lint and format state of the baseline
+
+Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than the Dockerfile's
+`rust:1.97`), on files this fork does not touch:
+
+- `cargo fmt --check` (from `backend/`) reports diffs in 40 upstream files (parsers, `tests/`,
+  ...). None of the fork's Rust files are among them; each fork file is checked with `rustfmt
+  --check` individually.
+- `cargo clippy` stops on deny-by-default lints in untouched crates:
+  `windmill-queue/src/jobs.rs:7525` (`absurd_extreme_comparisons`) and
+  `windmill-worker/src/bun_executor.rs:2588` (`ifs_same_cond`). Run with `-- --cap-lints warn`
+  to reach the fork's crates; the fork's files then show only the codebase-wide
+  `result_large_err` (from `windmill_common::error::Error`) and one `unnecessary_to_owned` in the
+  untouched `submit_onboarding_data` stub of `users_oss.rs`.
+- The integration-test crate links `rdkafka`, whose build script needs `cmake`.
+
 ## Modified upstream files
 
 ### `.gitignore`
@@ -136,9 +152,8 @@ Left untouched (not one of the four quotas):
     with the shared `Argon2::default()` (Argon2id, PHC string). Also covers `reset_password`.
   - `create_user`: superadmin only (`require_super_admin`; the route wrapper already refuses job
     tokens). Email is trimmed and lowercased, checked with `VALID_EMAIL` and `usr_accepts_email`.
-    `login_type` defaults to `password` and must match `[a-z][a-z0-9_-]{0,49}`; `password`
-    requires a password, every other type (`entra`, `pending_oauth`, ...) must not carry one and
-    stores a NULL hash. `has_any_account` and the `password` primary key both map to 409, so
+    `login_type` defaults to `password` and must be one of `password`, `pending_oauth`, `entra`;
+    `password` requires a password, the other two must not carry one and store a NULL hash. `has_any_account` and the `password` primary key both map to 409, so
     concurrent duplicates leave one row. Instance username follows `automate_username_creation`
     (reuse the `pending_user` reservation or generate one, then drop the reservation; NULL when
     automation is off). Inserts with `verified = true`, writes the `users.add_global` audit entry

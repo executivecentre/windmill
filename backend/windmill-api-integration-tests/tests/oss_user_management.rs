@@ -157,13 +157,17 @@ async fn provider_user_has_no_password(db: Pool<Postgres>) -> anyhow::Result<()>
             .await?;
     assert_eq!(login_type, "entra");
 
-    let resp = create(
-        port,
-        "SECRET_TOKEN",
-        json!({"email": "carol@example.com", "super_admin": false, "login_type": "Bad Type"}),
-    )
-    .await?;
-    assert_eq!(resp.status(), 400);
+    // Only password, pending_oauth and entra accounts can be created.
+    for login_type in ["github", "saml", "Entra", ""] {
+        let resp = create(
+            port,
+            "SECRET_TOKEN",
+            json!({"email": "carol@example.com", "super_admin": false,
+                   "login_type": login_type}),
+        )
+        .await?;
+        assert_eq!(resp.status(), 400, "{login_type}");
+    }
 
     Ok(())
 }

@@ -51,24 +51,18 @@ const MIN_PASSWORD_LEN: usize = 12;
 #[cfg(not(feature = "private"))]
 const PASSWORD_LOGIN_TYPE: &str = "password";
 
-/// Width of `password.login_type`.
+/// `entra` accounts are owned by the Entra ID gateway; this build has no other identity provider.
 #[cfg(not(feature = "private"))]
-const LOGIN_TYPE_MAX_LEN: usize = 50;
+const CREATABLE_LOGIN_TYPES: [&str; 3] = [PASSWORD_LOGIN_TYPE, PENDING_OAUTH_LOGIN_TYPE, "entra"];
 
 #[cfg(not(feature = "private"))]
 fn validate_login_type(login_type: &str) -> Result<()> {
-    let valid = !login_type.is_empty()
-        && login_type.len() <= LOGIN_TYPE_MAX_LEN
-        && login_type.starts_with(|c: char| c.is_ascii_lowercase())
-        && login_type
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
-    if valid {
+    if CREATABLE_LOGIN_TYPES.contains(&login_type) {
         Ok(())
     } else {
         Err(Error::BadRequest(format!(
-            "invalid login_type: expected lowercase letters, digits, '_' or '-', at most \
-             {LOGIN_TYPE_MAX_LEN} characters"
+            "invalid login_type: expected one of {}",
+            CREATABLE_LOGIN_TYPES.join(", ")
         )))
     }
 }
