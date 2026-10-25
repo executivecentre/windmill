@@ -77,6 +77,9 @@ All commands run from the repository root.
    working). Then, from an address in `ADMIN_ALLOWED_CIDRS`, open
    `${PUBLIC_BASE_URL}/user/login?local=1`, sign in as `admin@windmill.dev` with that password,
    and create the workspaces your mapping file names. The gateway never creates workspaces.
+   Windmill's own first-run page, if you use it to change the admin's e-mail or password,
+   finishes by opening `/user/login`, which now goes to Entra: open `/user/login?local=1` again
+   yourself.
 8. **Check.** `local/scripts/smoke.sh` should print only PASS lines, plus one SKIP if the
    gateway is not running yet.
 
@@ -177,7 +180,8 @@ Run each step once.
    Resolve conflicts with the **Re-apply** notes in `PATCHES.md`. Then rerun the edition-limit
    sweep recorded there, to catch any new cap.
 3. Run the fork's tests:
-   - `oss_user_management` and `login_link` in `backend/windmill-api-integration-tests`;
+   - `oss_user_management`, `oss_entra_gateway_flow` and `login_link` in
+     `backend/windmill-api-integration-tests`;
    - `go test -race ./...` for the gateway;
    - the frontend type check;
    - `local/test/e2e.sh` and `local/test/e2e.sh browser` (after the build in step 4).

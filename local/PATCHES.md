@@ -167,7 +167,9 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
   the break-glass admin need both.
 - **Tests**: `backend/windmill-api-integration-tests/tests/oss_user_management.rs` (new file),
   including an ungated port of `test_set_password_revokes_mcp_oauth_grants`, whose upstream copy
-  in `tests/users.rs` is gated on `enterprise` + `private`.
+  in `tests/users.rs` is gated on `enterprise` + `private`; and
+  `tests/oss_entra_gateway_flow.rs` (new file), which replays the Windmill API calls the
+  gateway makes, in order, authenticated with `SUPERADMIN_SECRET`.
 - **Re-apply**: if upstream changes the stub signatures, adapt the bodies; if upstream ever ships
   an OSS implementation, drop this patch and the new test file and rerun the tests against it.
 
