@@ -46,8 +46,9 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · Windmill</title>
 <style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#1f2937}
-h1{font-size:1.25rem}a{color:#2563eb}</style></head>
-<body><h1>{{.Title}}</h1><p>{{.Message}}</p>{{if .Retry}}<p><a href="/sso/login">Sign in</a></p>{{end}}</body></html>
+h1{font-size:1.25rem}a{color:#2563eb}footer{margin-top:3rem;color:#6b7280;font-size:.8rem}</style></head>
+<body><h1>{{.Title}}</h1><p>{{.Message}}</p>{{if .Retry}}<p><a href="/sso/login">Sign in</a></p>{{end}}
+<footer>This Windmill instance runs modified software licensed under the GNU AGPLv3. <a href="/source/">Source code</a></footer></body></html>
 `))
 
 func renderPage(w http.ResponseWriter, status int, p page) {

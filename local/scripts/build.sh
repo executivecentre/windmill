@@ -15,6 +15,11 @@ case ",$features," in
 esac
 
 sha=$(git rev-parse HEAD)
+# The revision label must name the source an image was built from (AGPL source offer).
+if [ -n "$(git status --porcelain)" ]; then
+	sha="$sha-dirty"
+	echo "build.sh: working tree has uncommitted changes; labelling images $sha" >&2
+fi
 if docker image inspect windmill-custom:local >/dev/null 2>&1; then
 	docker tag windmill-custom:local windmill-custom:prev
 fi

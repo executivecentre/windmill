@@ -64,4 +64,11 @@
 
 		reverse_proxy windmill_server:8000
 	}
+
+	# The gateway is down or not configured yet: say so instead of an empty 502.
+	handle_errors 502 503 504 {
+		@sso path /sso/*
+		header @sso Content-Type "text/plain; charset=utf-8"
+		respond @sso "Single sign-on is temporarily unavailable. Try again shortly, or contact your administrator." 503
+	}
 }

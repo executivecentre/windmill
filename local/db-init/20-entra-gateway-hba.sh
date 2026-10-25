@@ -10,4 +10,6 @@ hba="$PGDATA/pg_hba.conf"
 	echo "local   all             entra_gateway           reject"
 	cat "$hba"
 } >"$hba.new"
+# initdb creates pg_hba.conf as 600; the new file would otherwise take the caller's umask.
+chmod 600 "$hba.new"
 mv "$hba.new" "$hba"
