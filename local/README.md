@@ -31,7 +31,14 @@ Caddy's routing (`Caddyfile`):
 
 - `/user/login` goes to `/sso/login`, so every interactive sign-in is via Entra.
   `/user/login?local=1` (the password form) and `/api/auth/login` are allowed only from
-  `ADMIN_ALLOWED_CIDRS` and get 403 from anywhere else. This is the break-glass path.
+  `ADMIN_ALLOWED_CIDRS` and get 403 from anywhere else. This is the break-glass path. The
+  Windmill frontend does the same redirect for in-app navigations, which never reach Caddy
+  (see `PATCHES.md`).
+- `SUPERADMIN_SECRET` (in the `Authorization` header, the `token` cookie or `?token=`) gets 403
+  from outside `ADMIN_ALLOWED_CIDRS`. The gateway uses it on the internal network only. Caddy
+  reads the secret file for this, so `windmill_superadmin_secret` is also mounted into `caddy`.
+- `/ws/*` (`windmill_extra`'s language servers, which do no authentication of their own) needs
+  a valid Windmill session or token: Caddy checks it with `/api/users/whoami` first.
 - `/api/users/login_links`, `/api/users/create` and `/api/users/overwrite` always get 403
   through Caddy. Only the gateway calls them, on the internal network.
 - `/source/` serves the source code (see [Source code offer](#source-code-offer-agplv3-13)).
@@ -58,7 +65,9 @@ All commands run from the repository root.
    uncommitted changes are labelled `<sha>-dirty`, and those can't be published as source.
 5. **Source bundle.** `local/scripts/make-source-bundle.sh`.
 6. **Start.** `local/scripts/up.sh`. It refuses to start while a secret or the mapping file is
-   missing. Before the Entra values exist you can start everything except the gateway:
+   missing. Compose mounts file secrets with their host owner and mode, so `up.sh` runs the
+   gateway as the owner of `local/secrets/` (`GATEWAY_USER`); if that owner is root, it asks you
+   to `chown 65532:65532` the gateway's four secret files instead. Before the Entra values exist you can start everything except the gateway:
    `local/scripts/up.sh db windmill_server windmill_worker windmill_worker_native windmill_extra caddy`.
    `/sso/*` then shows a "single sign-on is unavailable" page. Windmill and the gateway apply
    their own database migrations at start.
@@ -74,6 +83,18 @@ All commands run from the repository root.
 Entra users who sign in are created as `entra` accounts. They are never instance superadmins,
 and Windmill refuses to set a password on an `entra` account. Give instance administration to
 the break-glass account only.
+
+## Access changes and sign-out
+
+- **Sign out** in Windmill ends at the gateway's `/sso/logout`, which ends the Entra session
+  too, so the next visit asks Entra to sign in again.
+- **Removing a user from an Entra group** takes effect at their next sign-in, or at the next
+  reconcile run (`RECONCILE_INTERVAL`, default 15m), whichever comes first. Windmill caches a
+  session's permissions for up to 120 s, so an open session can keep a removed workspace that
+  long after the reconcile. In the E2E run (1-minute interval) it took 45 s to disable the
+  membership and 70 s more for the open session to lose it.
+- **Disabling the account in Entra** disables the Windmill account at the next reconcile run,
+  and its sessions stop working at once.
 
 ## TLS
 
@@ -115,6 +136,21 @@ docker compose --env-file local/.env -f docker-compose.yml -f docker-compose.loc
 Step 3 prints four expected errors, because the fresh volume already has the `postgres` and
 `entra_gateway` roles and both databases. Every other statement must succeed.
 
+## Testing
+
+`local/test/` holds a TEST-ONLY end-to-end run against a mock Entra ID (OIDC with PKCE, and
+Microsoft Graph), as the separate compose project `windmill-custom-e2e` on
+https://localhost:3443. Its database lives in tmpfs, and its secrets and certificates are generated
+into `local/test/run/` (git-ignored). It never touches the main stack's volumes.
+
+| Command | What it does |
+| --- | --- |
+| `local/test/e2e.sh` | start the project, then `smoke.sh`, the SSO driver (sign-in, roles, groups, jobs, tokens, webhooks, `wmill` CLI, replay and denial cases, reconcile), and a scan of every container log for credentials |
+| `local/test/e2e.sh browser` | a real browser (Playwright from `frontend/node_modules`) through the SPA's sign-in, sign-out and session-expiry paths |
+| `local/test/e2e.sh down` | remove the project's containers (named volumes are kept) |
+
+A real Entra tenant is not part of these tests.
+
 ## Existing database volumes
 
 `local/db-init/` runs only when the `db` volume is created. When you switch an existing
@@ -143,7 +179,8 @@ Run each step once.
 3. Run the fork's tests:
    - `oss_user_management` and `login_link` in `backend/windmill-api-integration-tests`;
    - `go test -race ./...` for the gateway;
-   - the frontend type check.
+   - the frontend type check;
+   - `local/test/e2e.sh` and `local/test/e2e.sh browser` (after the build in step 4).
 4. `local/scripts/build.sh`. The previous images stay available as `windmill-custom:prev` and
    `windmill-entra:prev`.
 5. `local/scripts/make-source-bundle.sh`, then `local/scripts/up.sh`, then
