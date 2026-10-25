@@ -103,6 +103,9 @@ services:
     image: windmill-entra:local
     pull_policy: never
     restart: unless-stopped
+    # Compose bind-mounts file secrets with their host owner and mode (600), so the gateway runs
+    # as the owner of local/secrets/; up.sh sets this.
+    user: "${GATEWAY_USER:-65532:65532}"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

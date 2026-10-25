@@ -1,12 +1,20 @@
 #!/bin/sh
 # Post-deploy smoke test through Caddy at PUBLIC_BASE_URL. Unauthenticated: it checks routing
 # and the security boundaries, not workloads. Prints PASS/FAIL/SKIP per check and exits non-zero
-# if anything failed.
+# if anything failed. The SMOKE_* variables exist for local/test/e2e.sh; a deployment leaves
+# them unset.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
-dc() { docker compose --env-file local/.env -f docker-compose.yml -f docker-compose.local.yml "$@"; }
-env_value() { sed -n "s/^$1=//p" local/.env | tail -n 1; }
+env_file=${SMOKE_ENV_FILE:-local/.env}
+compose_files=${SMOKE_COMPOSE_FILES:-"docker-compose.yml docker-compose.local.yml"}
+authority=${SMOKE_AUTHORITY_URL:-https://login.microsoftonline.com}
+published_ok=${SMOKE_PUBLISHED_OK:-caddy}
+dc() {
+	set -- --env-file "$env_file" $(printf -- '-f %s ' $compose_files) "$@"
+	docker compose "$@"
+}
+env_value() { sed -n "s/^$1=//p" "$env_file" | tail -n 1; }
 
 base=$(env_value PUBLIC_BASE_URL)
 host=$(env_value PUBLIC_HOST)
@@ -48,6 +56,15 @@ for svc in db windmill_server windmill_worker windmill_worker_native caddy; do
 		fail "service $svc running"
 	fi
 done
+# Only Caddy may publish host ports; everything else, windmill_server:8000 included, is internal.
+dc ps --format '{{.Service}} {{.Ports}}' 2>/dev/null >"$tmp/ports"
+while read -r svc ports; do
+	case " $published_ok " in *" $svc "*) continue ;; esac
+	case "$ports" in
+	*"->"*) fail "service $svc publishes host ports: $ports" ;;
+	*) pass "service $svc publishes no host port" ;;
+	esac
+done <"$tmp/ports"
 if dc exec -T windmill_server sh -c '[ -z "${NO_AUTH+x}" ]' 2>/dev/null; then
 	pass "NO_AUTH unset in windmill_server"
 else
@@ -70,6 +87,7 @@ case "$out" in
 *) fail "/user/login redirects to SSO (got: $out)" ;;
 esac
 expect "login-link error page still reaches Windmill" GET /user/login_link_expired 200
+expect "language servers refuse unauthenticated requests" GET /ws/health 401
 
 # --- break-glass password login ----------------------------------------------------------------
 # From inside the compose network the caller is a container address, which must not be in
@@ -96,9 +114,10 @@ if dc ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx entra_g
 	health=$(docker inspect --format '{{.State.Health.Status}}' "$(dc ps -q entra_gateway)")
 	[ "$health" = healthy ] && pass "entra_gateway healthy" || fail "entra_gateway health: $health"
 	out=$(req GET /sso/login)
+	idp="$authority/$(env_value ENTRA_TENANT_ID)/oauth2/v2.0/authorize?"
 	case "$out" in
-	"302 "*) pass "/sso/login redirects to the identity provider" ;;
-	*) fail "/sso/login (got: $out)" ;;
+	"302 $idp"*) pass "/sso/login redirects to ${idp}…" ;;
+	*) fail "/sso/login redirects to ${idp}… (got: ${out%%\?*})" ;;
 	esac
 else
 	skip "entra_gateway not running (Entra values not configured?)"

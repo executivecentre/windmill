@@ -59,8 +59,16 @@
 		}
 		redir @sso_login /sso/login?{query} 302
 
-		@lsp path /ws/*
-		reverse_proxy @lsp windmill_extra:3000
+		# windmill_extra's language servers do no authentication of their own: admit only
+		# requests carrying a valid Windmill session or token.
+		handle /ws/* {
+			forward_auth windmill_server:8000 {
+				uri /api/users/whoami
+				header_up -Connection
+				header_up -Upgrade
+			}
+			reverse_proxy windmill_extra:3000
+		}
 
 		reverse_proxy windmill_server:8000
 	}

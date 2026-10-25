@@ -64,19 +64,39 @@ pub fn workspaced_service(proxy_body_limit: usize) -> Router {
         )
 }
 
-/// A request URI as logs should record it: with the proxy key masked, since that key is what keeps
-/// a link from spending a stored remote token.
+/// Path prefixes whose next segment is a credential: the proxy key, which keeps a link from
+/// spending a stored remote token, and the single-use token of a login link.
+const SECRET_SEGMENT_PREFIXES: [&str; 2] = [PROXY_PREFIX, "/api/auth/login_link/"];
+
+fn is_token_param(pair: &str) -> bool {
+    pair == "token" || pair.starts_with("token=")
+}
+
+/// A request URI as logs should record it: with credentials masked, both those in the path and
+/// the `token` query parameter, which authenticates a request like a bearer token.
 pub struct RedactedUri<'a>(pub &'a axum::http::Uri);
 
 impl std::fmt::Display for RedactedUri<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Some((head, keyed)) = self.0.path().split_once(PROXY_PREFIX) else {
+        let path = self.0.path();
+        let masked_path = SECRET_SEGMENT_PREFIXES.iter().find_map(|prefix| {
+            let (head, keyed) = path.split_once(prefix)?;
+            let rest = keyed.find('/').map_or("", |i| &keyed[i..]);
+            Some(format!("{head}{prefix}***{rest}"))
+        });
+        let query = self.0.query();
+        if masked_path.is_none() && !query.is_some_and(|q| q.split('&').any(is_token_param)) {
             return self.0.fmt(f);
-        };
-        let rest = keyed.find('/').map_or("", |i| &keyed[i..]);
-        write!(f, "{head}{PROXY_PREFIX}***{rest}")?;
-        match self.0.query() {
-            Some(query) => write!(f, "?{query}"),
+        }
+        f.write_str(masked_path.as_deref().unwrap_or(path))?;
+        match query {
+            Some(query) => {
+                let pairs: Vec<&str> = query
+                    .split('&')
+                    .map(|p| if is_token_param(p) { "token=***" } else { p })
+                    .collect();
+                write!(f, "?{}", pairs.join("&"))
+            }
             None => Ok(()),
         }
     }
@@ -758,6 +778,24 @@ mod tests {
         );
         let other: axum::http::Uri = "/api/w/dev/flows/list?x=1".parse().unwrap();
         assert_eq!(RedactedUri(&other).to_string(), "/api/w/dev/flows/list?x=1");
+    }
+
+    #[test]
+    fn redacted_uri_masks_login_links_and_token_queries() {
+        let link: axum::http::Uri = "/api/auth/login_link/s3cr3tLinkToken".parse().unwrap();
+        assert_eq!(RedactedUri(&link).to_string(), "/api/auth/login_link/***");
+        let hook: axum::http::Uri = "/api/w/dev/jobs/run/p/f/a?a=1&token=s3cr3t&b=2"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            RedactedUri(&hook).to_string(),
+            "/api/w/dev/jobs/run/p/f/a?a=1&token=***&b=2"
+        );
+        let lookalike: axum::http::Uri = "/api/w/dev/flows/list?token_label=x".parse().unwrap();
+        assert_eq!(
+            RedactedUri(&lookalike).to_string(),
+            "/api/w/dev/flows/list?token_label=x"
+        );
     }
 
     #[test]

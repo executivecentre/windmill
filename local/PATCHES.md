@@ -205,3 +205,16 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
   license-gated control are unchanged.
 - **Re-apply**: replace the body of the `{#if tab === 'sso'}` branch (after the
   `SettingsPageHeader`) with the alert, then remove whatever the type check reports as unused.
+
+### `backend/windmill-api-workspaces/src/remote_deploy.rs`
+
+- **Change**: `RedactedUri` (the request URI that `windmill-api/src/tracing_init.rs` writes into
+  the request span and request record) also masks the segment after `/api/auth/login_link/` and
+  the value of any `token` query parameter (`token=***`). New unit test
+  `redacted_uri_masks_login_links_and_token_queries`.
+- **Reason**: the server logged every request URI at INFO, so the single-use login-link token
+  the gateway hands to the browser, and `?token=` credentials accepted by `extract_token`, landed
+  in container logs. Found by the credential scan in `local/test/e2e.sh`.
+- **Re-apply**: keep `RedactedUri` as the only thing that formats request URIs for logs; extend
+  its prefix list and query masking. If upstream moves `RedactedUri` or stops using it in
+  `tracing_init.rs`, apply the same masking wherever the request URI is logged.
