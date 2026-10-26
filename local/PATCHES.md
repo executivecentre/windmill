@@ -189,6 +189,18 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 - **Re-apply**: set the constant to `Number.POSITIVE_INFINITY` again. If upstream renames it or
   moves the cap, neutralise the count comparison only.
 
+### `frontend/src/lib/components/sessions/sessionState.test.ts`
+
+- **Change**: the upstream test "throws and never calls createWorkspaceFork when the CE workspace
+  cap is reached" becomes "lets an unlicensed user at the former CE cap proceed to
+  createWorkspaceFork": same setup (no license, 2 non-`admins` workspaces), asserting the fork is
+  attempted.
+- **Reason**: the upstream assertion is the cap this fork removes; the inverted test pins the
+  removal.
+- **Re-apply**: if upstream edits that test, keep its setup and assert that
+  `createWorkspaceFork` is called. Check: `npx vitest run src/lib/components/sessions/` (from
+  `frontend/`).
+
 ### `frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte`
 
 - **Change**: one line: `CE_MAX_NON_ADMIN_WORKSPACES` is `Number.POSITIVE_INFINITY` instead of
