@@ -3,7 +3,7 @@
 # windmill-custom-e2e (docker-compose.test.yml) on https://localhost:3443. Its database is in
 # tmpfs; its secrets, test CA and certificates are generated in local/test/run/ (git-ignored).
 #
-#   local/test/e2e.sh          up + test
+#   local/test/e2e.sh          down (empties the tmpfs database), up, test
 #   local/test/e2e.sh up       build mock-entra, generate test material, start the project
 #   local/test/e2e.sh test     smoke.sh, the E2E driver, then log scans for credentials
 #   local/test/e2e.sh browser  real-browser check of the SPA sign-in/sign-out paths (after test)
@@ -154,6 +154,8 @@ test) test_all ;;
 browser) browser ;;
 down) dc down ;;
 all)
+	# The driver expects an empty database; removing the containers empties the tmpfs one.
+	dc down
 	up
 	test_all
 	;;
