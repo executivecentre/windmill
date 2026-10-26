@@ -416,6 +416,7 @@ type windmillFake struct {
 	links       map[string]wmLink
 	createCalls int
 	loggedOut   []string
+	failPrefix  string // requests under this path answer 500
 }
 
 var usernameUnsafe = regexp.MustCompile(`[^a-z0-9_]`)
@@ -457,6 +458,10 @@ func (f *windmillFake) auth(next http.Handler) http.Handler {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.failPrefix != "" && strings.HasPrefix(r.URL.Path, f.failPrefix) {
+			http.Error(w, "injected failure", 500)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -509,6 +514,13 @@ func (f *windmillFake) seedMember(ws string, m wmMember) {
 	f.mu.Lock()
 	f.members[ws][m.Email] = &m
 	f.mu.Unlock()
+}
+
+// failUnder makes every request under prefix fail with 500; "" turns it off.
+func (f *windmillFake) failUnder(prefix string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failPrefix = prefix
 }
 
 func (f *windmillFake) setLinkBase(b string) {

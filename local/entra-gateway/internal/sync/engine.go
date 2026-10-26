@@ -78,12 +78,13 @@ func (e *Engine) syncIdentity(ctx context.Context, id oidc.Identity, user *graph
 		}
 		if reason := e.entraRefusal(user); reason != "" {
 			if ident != nil {
-				// Windmill keeps running a disabled account's schedules and triggers; only a
-				// disabled workspace membership stops them.
-				if err := e.apply(ctx, ident, nil); err != nil {
+				// The account first, so a failing revoke cannot leave it signed in. Windmill
+				// keeps running a disabled account's schedules and triggers; only a disabled
+				// workspace membership stops them. Both steps are idempotent across retries.
+				if err := e.disableAccount(ctx, ident, reason); err != nil {
 					return err
 				}
-				if err := e.disableAccount(ctx, ident, reason); err != nil {
+				if err := e.apply(ctx, ident, nil); err != nil {
 					return err
 				}
 			}

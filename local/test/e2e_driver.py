@@ -311,6 +311,9 @@ mock_user(ALICE, "alice", enabled=False, groups=[G["a1"], G["f1"], G["f2"], G["a
 timed("reconcile disables alice's account after Entra disables her",
       lambda: global_user("alice@e2e.example.org").get("disabled"))
 timed("alice's existing session stops working", lambda: b.api("GET", "/api/users/whoami")[0] == 401)
+st, ma = sup("GET", f"/api/w/e2e-alpha/users/get/{alice_user}")
+check("disabling the account also disables alice's e2e-alpha membership (stops her schedules)",
+      st == 200 and ma.get("disabled") is True, f"HTTP {st} disabled={ma.get('disabled') if st == 200 else None}")
 x, st, _, _ = sign_in(ALICE)
 check("alice cannot sign in while disabled in Entra", 400 <= st < 500 and x.session is None, f"HTTP {st}")
 

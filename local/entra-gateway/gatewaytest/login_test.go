@@ -413,6 +413,22 @@ func TestDeprovisionAndReenable(t *testing.T) {
 			t.Fatal("gateway did not re-enable the membership it disabled")
 		}
 	})
+	t.Run("a failing membership revoke still disables the account", func(t *testing.T) {
+		h := newHarness(t)
+		h.addEntraUser(oid(7), "frank@corp.example", grpEng)
+		h.signedIn(h.login(oid(7), ""))
+		h.graph.setEnabled(oid(7), false)
+		h.wm.failUnder("/api/w/")
+		h.reconcile()
+		if !h.wm.user("frank@corp.example").Disabled {
+			t.Fatal("account left enabled because a membership revoke failed")
+		}
+		h.wm.failUnder("")
+		h.reconcile()
+		if !h.wm.member("eng", "frank@corp.example").Disabled {
+			t.Fatal("membership not disabled on the next reconcile")
+		}
+	})
 	t.Run("administrator-disabled account stays disabled", func(t *testing.T) {
 		h := newHarness(t)
 		h.addEntraUser(oid(8), "gina@corp.example", grpEng)
