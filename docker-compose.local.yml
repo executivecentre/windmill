@@ -49,6 +49,8 @@ services:
     image: windmill-custom:local
     pull_policy: never
     <<: *windmill-entrypoint
+    deploy:
+      replicas: ${WINDMILL_WORKER_REPLICAS:-1}
     environment: !override
       - DATABASE_URL_FILE=/run/secrets/windmill_database_url
       - MODE=worker

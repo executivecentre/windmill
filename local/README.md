@@ -19,7 +19,7 @@ No Enterprise code is built, and no Enterprise license is used: the cargo featur
 | --- | --- | --- |
 | `caddy` | `caddy:2.11.4` (pinned) | host: `CADDY_HTTPS_BIND` (443) and `CADDY_HTTP_BIND` (80, redirects to https) |
 | `windmill_server` | `windmill-custom:local` | Caddy only |
-| `windmill_worker` ×3, `windmill_worker_native` | `windmill-custom:local` | no inbound |
+| `windmill_worker` ×`WINDMILL_WORKER_REPLICAS` (default 1), `windmill_worker_native` | `windmill-custom:local` | no inbound |
 | `entra_gateway` | `windmill-entra:local` | Caddy only (`/sso/*`) |
 | `db` | `postgres:18` (pinned) | internal only. Holds databases `windmill` and `entra_gateway`. |
 | `windmill_extra` | official `windmill-extra` (pinned) | Caddy (`/ws/*`): language servers only. Debugger and multiplayer are off. `WINDMILL_EXTRA_REPLICAS=0` runs no official image at all, at the cost of editor code intelligence. |
