@@ -67,7 +67,10 @@ All rows of the brief's section 1 hold at `a72484b2`. Additional details found w
 
 ### Edition-limit sweep
 
-`rg -n "without an enterprise license|maximum number of|CE_MAX|Community edition is limited|Limited to [0-9]+" backend frontend/src`
+`local/scripts/check-upstream.sh --print-limits` (a `git grep -E` over `backend/*.rs`,
+`frontend/src/*.ts` and `frontend/src/*.svelte` for `without an enterprise license`,
+`maximum number of`, `CE_MAX`, `check_nb_of`, `Community edition is limited` and
+`[Ll]imited to <n>`). The reviewed result is `local/edition-limits.txt`.
 
 Patched (the four requested quotas and their UI):
 
@@ -89,7 +92,10 @@ Left untouched (not one of the four quotas):
   `windmill-common/src/instance_config.rs`, mirrored in `frontend/.../instanceSettings.ts`).
 - "The admins workspace is reserved for superadmins" membership rule (`workspaces.rs`).
 - `WORKSPACE_MAX_QUEUED_JOBS` (an instance setting, not an edition limit).
-- Unrelated strings (AI token limit message, a dbt test assertion, DOM typings, UI help text).
+- Volumes ("limited to 20 per workspace and 50 MB per file", `VolumesDrawer.svelte`) and email
+  triggers ("limited to 100 emails per day", `DefaultEmailPanel.svelte`,
+  `EmailTriggerPanel.svelte`): UI text; no enforcement of either exists in this OSS tree.
+- Unrelated strings (AI token limit message, a dbt test assertion, UI help text).
 
 ### Lint and format state of the baseline
 
@@ -258,3 +264,27 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 - **Reason**: the gateway's `/sso/logout` also ends the Entra session. Without it, the sign-in
   that follows a sign-out would complete silently against the live Entra session.
 - **Re-apply**: make the user-initiated sign-out end with a full navigation to `/sso/logout`.
+
+## Files added outside `local/`
+
+New files that live next to upstream code because the build or test layout needs them there.
+They conflict with nothing on rebase; `local/scripts/check-upstream.sh` fails if upstream ever
+adds a file at the same path.
+
+- `backend/windmill-api/src/users_oss_local.rs`: the OSS `create_user`, `set_password` and
+  `hash_password` implementations behind the `users_oss.rs` stubs.
+- `backend/windmill-api-integration-tests/tests/oss_user_management.rs`: tests for those.
+- `backend/windmill-api-integration-tests/tests/oss_entra_gateway_flow.rs`: replays the gateway's
+  Windmill API calls in order.
+- `docker-compose.local.yml`: the deployment's override of the upstream `docker-compose.yml`.
+- `docker-compose.test.yml`: the e2e stack's override (`local/test/e2e.sh`).
+
+## Checking the patch set
+
+`local/scripts/check-upstream.sh <upstream-ref>` compares the committed branch with
+`<upstream-ref>`: the files outside `local/` that differ must be exactly the entries of the two
+sections above, and the [edition-limit sweep](#edition-limit-sweep) must find exactly the hits
+recorded in `local/edition-limits.txt` (path and text, no line numbers). A new hit after an
+upgrade is upstream code to review: a new cap to patch (add an entry here) or an unrelated
+string. Either way, record the reviewed state with
+`local/scripts/check-upstream.sh --print-limits > local/edition-limits.txt`.
