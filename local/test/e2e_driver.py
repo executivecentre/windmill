@@ -138,7 +138,7 @@ def mock_user(oid, local, enabled=True, groups=(), domain="e2e.example.org"):
 def sign_in(oid, rd="/"):
     mock("POST", f"/_mock/next/{oid}")
     b = Browser()
-    st, final, text = b.get(f"{BASE}/user/login?rd={urllib.parse.quote(rd, safe='')}")
+    st, final, text = b.get(f"{BASE}/sso/login?rd={urllib.parse.quote(rd, safe='')}")
     return b, st, final, text
 
 
@@ -184,9 +184,9 @@ check("pre-existing password account erin created inside the network", st in (20
 # ---------------------------------------------------------------- sign-in ----
 b, st, final, text = sign_in(ALICE, rd="/scripts/add?x=1")
 paths = [urllib.parse.urlsplit(u).path for _, u in b.hops]
-expected = ["/user/login", "/sso/login", f"/{TENANT}/oauth2/v2.0/authorize", "/sso/callback"]
-check("alice: /user/login -> /sso/login -> Entra -> /sso/callback -> login link -> rd",
-      paths[:4] == expected and len(paths) == 6 and paths[4].startswith("/api/auth/login_link/")
+expected = ["/sso/login", f"/{TENANT}/oauth2/v2.0/authorize", "/sso/callback"]
+check("alice: /sso/login -> Entra -> /sso/callback -> login link -> rd",
+      paths[:3] == expected and len(paths) == 5 and paths[3].startswith("/api/auth/login_link/")
       and final == f"{BASE}/scripts/add?x=1" and st == 200,
       " -> ".join("/api/auth/login_link/…" if p.startswith("/api/auth/login_link/") else p for p in paths))
 callback_url = next((u for _, u in b.hops if urllib.parse.urlsplit(u).path == "/sso/callback"), None)

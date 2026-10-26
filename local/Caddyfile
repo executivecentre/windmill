@@ -57,19 +57,6 @@
 			not remote_ip {$ADMIN_ALLOWED_CIDRS}
 		}
 		respond @password_login_api 403
-		@password_login_page {
-			path /user/login
-			query local=1
-			not remote_ip {$ADMIN_ALLOWED_CIDRS}
-		}
-		respond @password_login_page 403
-
-		# Exact path: /user/login_link_expired must keep reaching Windmill.
-		@sso_login {
-			path /user/login
-			not query local=1
-		}
-		redir @sso_login /sso/login?{query} 302
 
 		# windmill_extra's language servers do no authentication of their own: admit only
 		# requests carrying a valid Windmill session or token.

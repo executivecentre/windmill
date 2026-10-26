@@ -23,6 +23,8 @@
 	import { refreshSuperadmin } from '$lib/refreshUser'
 	import { isValidLogoutRedirect, toSameOriginRelativePath } from '$lib/logoutRedirect'
 	import { confirmPendingLoginMethod } from '$lib/lastLoginMethod'
+	import { Button } from '$lib/components/common'
+	import MicrosoftIcon from '$lib/components/icons/MicrosoftIcon.svelte'
 
 	const email = page.url.searchParams.get('email') ?? ''
 	const password = page.url.searchParams.get('password') ?? ''
@@ -30,17 +32,6 @@
 	const rdFromStorage = localStorage.getItem('rd') || undefined
 	if (rdFromStorage) {
 		localStorage.removeItem('rd')
-	}
-	// Sign-in goes through the Entra gateway; only the break-glass form (`?local=1`) renders here.
-	// Caddy redirects full page loads, but sign-out and session expiry reach this route by
-	// client-side navigation, which never reaches Caddy.
-	const local = page.url.searchParams.get('local') === '1'
-	if (!local) {
-		const params = new URLSearchParams(page.url.search)
-		if (rdFromStorage && !params.has('rd')) {
-			params.set('rd', rdFromStorage)
-		}
-		window.location.replace(`/sso/login?${params}`)
 	}
 	const rawRd = page.url.searchParams.get('rd') ?? rdFromStorage
 	// Reduce same-origin full URLs (e.g. the page URL persisted from
@@ -73,6 +64,13 @@
 
 	onMount(() => {
 		clearWindmillCloudCookies()
+	})
+
+	// Local patch (local/PATCHES.md): Microsoft sign-in goes through the Entra gateway. The button
+	// shows only while the gateway answers, so an unconfigured gateway never leads to an error page.
+	let entraGateway = $state(false)
+	onMount(async () => {
+		entraGateway = (await fetch('/sso/status').catch(() => undefined))?.ok ?? false
 	})
 
 	async function redirectUser() {
@@ -143,14 +141,12 @@
 		firstTime = await (await fetch('/api/auth/is_first_time_setup')).json()
 	}
 
-	if (local) {
-		try {
-			setLicense()
-			redirectIfNecessary()
-			checkFirstTimeSetup()
-		} catch {
-			clearStores()
-		}
+	try {
+		setLicense()
+		redirectIfNecessary()
+		checkFirstTimeSetup()
+	} catch {
+		clearStores()
 	}
 </script>
 
@@ -178,6 +174,18 @@
 	</div>
 
 	<div class="mt-6 sm:mx-auto sm:w-full sm:max-w-sm">
+		{#if entraGateway}
+			<div class="grid mb-4 px-4 sm:px-0">
+				<Button
+					variant="default"
+					unifiedSize="lg"
+					startIcon={{ icon: MicrosoftIcon, classes: 'h-4' }}
+					href={`/sso/login?rd=${encodeURIComponent(rd ?? '/')}`}
+				>
+					Continue with Microsoft
+				</Button>
+			</div>
+		{/if}
 		<Login
 			{firstTime}
 			{rd}

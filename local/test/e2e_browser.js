@@ -52,46 +52,53 @@ const path = (u) => { const x = new URL(u); return (x.host + x.pathname).replace
 	page.on('request', (r) => { if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navs.push(r.url()) })
 	const seen = (re) => navs.some((u) => re.test(u))
 
-	// 1. Break-glass form still renders with ?local=1.
-	await page.goto(`${BASE}/user/login?local=1`)
-	await page.waitForLoadState('networkidle')
-	check('/user/login?local=1 renders the password form', await page.locator('input[type=password]').count() > 0,
-		path(page.url()))
+	const onLoginPage = () => page.waitForURL((u) => u.pathname === '/user/login', { timeout: 30000 })
+	const ssoSeen = () => seen(/\/sso\//)
 
-	// 2. "/" without a session: the SPA's own client-side redirect must end at the gateway and sign in.
-	await mockCall('POST', `/_mock/next/${OID}`)
+	// 1. "/" without a session: Windmill's own login page, with no hop through the gateway.
 	navs.length = 0
 	await page.goto(`${BASE}/`)
+	await onLoginPage()
+	await page.waitForLoadState('networkidle')
+	const msButton = page.getByText('Continue with Microsoft')
+	await msButton.waitFor({ timeout: 15000 }).catch(() => {})
+	check('signed-out visit to / shows the login page, no SSO redirect', !ssoSeen(), navs.map(path).join(' > '))
+	check('…with the password form', await page.locator('input[type=password]').count() > 0)
+	check('…and a "Continue with Microsoft" button', await msButton.count() === 1)
+	await page.screenshot({ path: `${SHOTS}/0-login-page.png` })
+
+	// 2. The Microsoft button signs in through the gateway and Entra.
+	await mockCall('POST', `/_mock/next/${OID}`)
+	navs.length = 0
+	await msButton.click()
 	await page.waitForURL((u) => u.host === 'localhost:3443' && !u.pathname.startsWith('/sso') &&
 		!u.pathname.startsWith('/api') && !u.pathname.startsWith('/user/login'), { timeout: 60000 })
 	await page.waitForLoadState('networkidle')
-	check('signed-out visit to / goes through /sso/login', seen(/\/sso\/login/), navs.map(path).join(' > '))
+	check('the button goes through /sso/login', seen(/\/sso\/login/), navs.map(path).join(' > '))
 	check('…then the Entra authorize endpoint', seen(/mock-entra:8443\/.*\/oauth2\/v2\.0\/authorize/))
 	check('…and back into Windmill signed in', (await page.context().cookies(BASE)).some((c) => c.name === 'token'),
 		path(page.url()))
 	await page.screenshot({ path: `${SHOTS}/1-signed-in.png` })
 
-	// 3. Sign out from the user menu: must end the Entra session via /sso/logout.
+	// 3. Log out lands on the login page, not on the gateway.
 	navs.length = 0
 	// /user/workspaces offers "Log out", which calls the same logout() as the sidebar's "Sign out".
 	await page.getByRole('button', { name: 'Log out', exact: true }).first().click({ timeout: 15000 })
-	await page.waitForURL(/\/sso\/logged-out/, { timeout: 30000 })
-	check('Sign out goes to /sso/logout', seen(/\/sso\/logout/), navs.map(path).join(' > '))
-	check('…through the Entra end-session endpoint', seen(/mock-entra:8443\/.*logout/))
+	await onLoginPage()
+	check('Log out lands on the login page, no SSO redirect', !ssoSeen(), navs.map(path).join(' > '))
 	check('…and the Windmill session cookie is gone',
 		!(await page.context().cookies(BASE)).some((c) => c.name === 'token' && c.value))
 	await page.screenshot({ path: `${SHOTS}/2-logged-out.png` })
 
-	// 4. Expired session: an invalid token cookie on an app page must land on /sso/login with rd.
+	// 4. Expired session: an invalid token cookie on an app page lands on the login page with rd.
 	await ctx.addCookies([{ name: 'token', value: 'expired-session-token', url: BASE }])
 	navs.length = 0
-	await mockCall('POST', `/_mock/next/${OID}`)
 	await page.goto(`${BASE}/resources`)
-	await page.waitForURL((u) => navs.some((n) => /\/sso\/login/.test(n)), { timeout: 60000 }).catch(() => {})
-	const ssoNav = navs.find((u) => /\/sso\/login/.test(u))
-	check('an expired session reaches /sso/login', !!ssoNav, navs.map(path).join(' > '))
-	check('…keeping the page as rd', !!ssoNav && new URL(ssoNav).searchParams.get('rd') === '/resources',
-		ssoNav ? `rd=${new URL(ssoNav).searchParams.get('rd')}` : '')
+	await onLoginPage().catch(() => {})
+	check('an expired session lands on the login page, no SSO redirect',
+		new URL(page.url()).pathname === '/user/login' && !ssoSeen(), navs.map(path).join(' > '))
+	check('…keeping the page as rd', new URL(page.url()).searchParams.get('rd') === '/resources',
+		`rd=${new URL(page.url()).searchParams.get('rd')}`)
 
 	// 5. Instance settings SSO tab (AuthSettings.svelte patch): the gateway notice, not upstream's
 	// provider forms. Signs in as the break-glass admin; this host is in ADMIN_ALLOWED_CIDRS.

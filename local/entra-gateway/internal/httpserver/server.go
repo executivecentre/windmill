@@ -89,6 +89,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sso/callback", s.callback)
 	mux.HandleFunc("GET /sso/logout", s.logout)
 	mux.HandleFunc("GET /sso/logged-out", s.loggedOut)
+	// The login page offers Microsoft sign-in only while this answers 204.
+	mux.HandleFunc("GET /sso/status", func(w http.ResponseWriter, _ *http.Request) {
+		if !s.auth.Ready() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /readyz", s.ready)
 	return securityHeaders(mux)

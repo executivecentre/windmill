@@ -81,11 +81,7 @@ expect "unauthenticated API call refused" GET /api/users/whoami 401
 expect "login links only from the gateway" POST /api/users/login_links 403
 expect "account creation only from the gateway" POST /api/users/create 403
 expect "account overwrite only from the gateway" POST /api/users/overwrite 403
-out=$(req GET '/user/login?rd=%2Fscripts')
-case "$out" in
-"302 $base/sso/login?rd=%2Fscripts") pass "/user/login redirects to SSO" ;;
-*) fail "/user/login redirects to SSO (got: $out)" ;;
-esac
+expect "login page renders, no redirect to SSO" GET '/user/login?rd=%2Fscripts' 200
 expect "login-link error page still reaches Windmill" GET /user/login_link_expired 200
 expect "language servers refuse unauthenticated requests" GET /ws/health 401
 

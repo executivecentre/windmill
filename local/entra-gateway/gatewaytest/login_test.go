@@ -481,6 +481,9 @@ func TestReadinessAndHeaders(t *testing.T) {
 	if rec := h.get(publicBase + "/readyz"); rec.Code != http.StatusOK {
 		t.Fatalf("readyz %d", rec.Code)
 	}
+	if rec := h.get(publicBase + "/sso/status"); rec.Code != http.StatusNoContent {
+		t.Fatalf("sso/status %d", rec.Code)
+	}
 	rec := h.get(publicBase + "/sso/login")
 	for k, v := range map[string]string{"Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"} {
 		if rec.Header().Get(k) != v {

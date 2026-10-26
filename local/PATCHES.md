@@ -245,25 +245,15 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 
 ### `frontend/src/routes/(root)/(logged)/user/(user)/login/+page.svelte`
 
-- **Change**: unless the URL has `local=1`, the page calls
-  `window.location.replace('/sso/login?<same query>')` (adding the `rd` it takes from
-  `localStorage`, if the query has none) and skips its own session check and redirects.
-- **Reason**: Caddy sends full page loads of `/user/login` to the gateway, but sign-out, session
-  expiry and the 404 handler reach this route by client-side navigation, which never reaches
-  Caddy, and would leave Entra users on a password form they cannot use. The route file is
-  patched, not `Login.svelte`, which is also embedded in approval and public-app pages.
-- **Re-apply**: at the top of the route's script, before anything navigates, redirect every
-  visit without `local=1` to `/sso/login` with the query string.
-
-### `frontend/src/lib/logoutKit.ts`
-
-- **Change**: `logout()` clears the Windmill session as before, then does
-  `window.location.replace('/sso/logout')` instead of `goto('/user/login')` and a toast; the
-  `sendUserToast` import is dropped. `logoutWithRedirect` is unchanged (it lands on
-  `/user/login`, which now goes to the gateway).
-- **Reason**: the gateway's `/sso/logout` also ends the Entra session. Without it, the sign-in
-  that follows a sign-out would complete silently against the live Entra session.
-- **Re-apply**: make the user-initiated sign-out end with a full navigation to `/sso/logout`.
+- **Change**: adds a "Continue with Microsoft" `Button` (with `MicrosoftIcon`) above the `<Login>`
+  card, linking to `/sso/login?rd=<rd>`. It renders only when `GET /sso/status` answers 2xx,
+  which the gateway does once its Entra configuration is loaded. Nothing else changes: the page
+  is upstream's login page, password form included, and never redirects to the gateway.
+- **Reason**: Entra sign-in goes through the gateway, which is not one of Windmill's OAuth
+  login providers, so `Login.svelte` cannot list it. The route file is patched, not
+  `Login.svelte`, which is also embedded in approval and public-app pages.
+- **Re-apply**: re-add the two imports, the `entraGateway` state with its `onMount` probe, and
+  the `{#if entraGateway}` button block before `<Login`.
 
 ## Files added outside `local/`
 

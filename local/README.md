@@ -29,11 +29,10 @@ service that publishes host ports.
 
 Caddy's routing (`Caddyfile`):
 
-- `/user/login` goes to `/sso/login`, so every interactive sign-in is via Entra.
-  `/user/login?local=1` (the password form) and `/api/auth/login` are allowed only from
-  `ADMIN_ALLOWED_CIDRS` and get 403 from anywhere else. This is the break-glass path. The
-  Windmill frontend does the same redirect for in-app navigations, which never reach Caddy
-  (see `PATCHES.md`).
+- `/user/login` is Windmill's own login page; nothing redirects it to the gateway. Once the
+  gateway is configured, the page also shows **Continue with Microsoft**, which opens
+  `/sso/login`. Password sign-in (`/api/auth/login`) is allowed only from `ADMIN_ALLOWED_CIDRS`
+  and gets 403 from anywhere else. This is the break-glass path.
 - `SUPERADMIN_SECRET` (in the `Authorization` header, the `token` cookie or `?token=`) gets 403
   from outside `ADMIN_ALLOWED_CIDRS`. The gateway uses it on the internal network only. Caddy
   reads the secret file for this, so `windmill_superadmin_secret` is also mounted into `caddy`.
@@ -75,11 +74,8 @@ All commands run from the repository root.
    every new database. `local/scripts/set-admin-password.sh` replaces it with
    `local/secrets/windmill_admin_password` (it does nothing once the seeded password stops
    working). Then, from an address in `ADMIN_ALLOWED_CIDRS`, open
-   `${PUBLIC_BASE_URL}/user/login?local=1`, sign in as `admin@windmill.dev` with that password,
+   `${PUBLIC_BASE_URL}/user/login`, sign in as `admin@windmill.dev` with that password,
    and create the workspaces your mapping file names. The gateway never creates workspaces.
-   Windmill's own first-run page, if you use it to change the admin's e-mail or password,
-   finishes by opening `/user/login`, which now goes to Entra: open `/user/login?local=1` again
-   yourself.
 8. **Check.** `local/scripts/smoke.sh` should print only PASS lines, plus one SKIP if the
    gateway is not running yet.
 
@@ -99,8 +95,9 @@ curl -X POST -H "Authorization: Bearer $(cat local/secrets/windmill_superadmin_s
 
 ## Access changes and sign-out
 
-- **Sign out** in Windmill ends at the gateway's `/sso/logout`, which ends the Entra session
-  too, so the next visit asks Entra to sign in again.
+- **Sign out** in Windmill ends the Windmill session and returns to the login page. The browser's
+  Microsoft session stays open, so **Continue with Microsoft** may sign the same person in
+  without a prompt. `${PUBLIC_BASE_URL}/sso/logout` also ends the Entra session.
 - **Removing a user from an Entra group** takes effect at their next sign-in, or at the next
   reconcile run (`RECONCILE_INTERVAL`, default 15m), whichever comes first. Windmill caches a
   session's permissions for up to 120 s, so an open session can keep a removed workspace that
