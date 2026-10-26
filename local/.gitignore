@@ -1,9 +1,9 @@
-# Operator-specific values and generated output; never commit them.
-/.env
-/secrets/*
-!/secrets/README.md
+# Generated output; never commit it.
 /dist/
+# Operator files from before the deployment moved to its own repository; never commit them.
+/.env
+/secrets/
 /backups/
 /group-mappings.yaml
 /certs/
-/test/run/
+/test/

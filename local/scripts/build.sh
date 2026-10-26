@@ -27,7 +27,7 @@ fi
 DOCKER_BUILDKIT=1 docker build \
 	--build-arg features="$features" \
 	--label "org.opencontainers.image.revision=$sha" \
-	--label "org.opencontainers.image.source=https://github.com/windmill-labs/windmill" \
+	--label "org.opencontainers.image.source=https://github.com/executivecentre/windmill" \
 	-t windmill-custom:local .
 
 if [ -f local/entra-gateway/Dockerfile ]; then

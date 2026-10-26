@@ -1,4 +1,4 @@
-# Entra group → Windmill workspace mapping. Copy to local/group-mappings.yaml (git-ignored) and
+# Entra group → Windmill workspace mapping. Copy to the deployment's deploy/group-mappings.yaml (git-ignored) and
 # replace the keys with the Object IDs of your own Entra groups (Entra admin center → Groups →
 # the group → Overview → Object ID). The gateway refuses to start if this file is invalid.
 #

@@ -1,8 +1,9 @@
 # Local patches against upstream Windmill
 
 This branch (`custom/unlimited-entra`) carries a small set of patches on top of the official
-OSS repository (`origin` = `https://github.com/windmill-labs/windmill.git`, read-only). Everything
-local lives under `local/` and `docker-compose.local.yml`; every upstream file that is modified is
+OSS repository (`upstream` = `https://github.com/windmill-labs/windmill.git`, read-only; this fork
+is `origin` = `https://github.com/executivecentre/windmill.git`). Everything local lives under
+`local/`; every upstream file that is modified is
 listed in [Modified upstream files](#modified-upstream-files) with the reason and how to re-apply
 it after an upstream change.
 
@@ -238,7 +239,7 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
   `redacted_uri_masks_login_links_and_token_queries`.
 - **Reason**: the server logged every request URI at INFO, so the single-use login-link token
   the gateway hands to the browser, and `?token=` credentials accepted by `extract_token`, landed
-  in container logs. Found by the credential scan in `local/test/e2e.sh`.
+  in container logs. Found by the e2e credential scan (the deployment's `deploy/test/e2e.sh`).
 - **Re-apply**: keep `RedactedUri` as the only thing that formats request URIs for logs; extend
   its prefix list and query masking. If upstream moves `RedactedUri` or stops using it in
   `tracing_init.rs`, apply the same masking wherever the request URI is logged.
@@ -266,8 +267,6 @@ adds a file at the same path.
 - `backend/windmill-api-integration-tests/tests/oss_user_management.rs`: tests for those.
 - `backend/windmill-api-integration-tests/tests/oss_entra_gateway_flow.rs`: replays the gateway's
   Windmill API calls in order.
-- `docker-compose.local.yml`: the deployment's override of the upstream `docker-compose.yml`.
-- `docker-compose.test.yml`: the e2e stack's override (`local/test/e2e.sh`).
 
 ## Checking the patch set
 

@@ -1,5 +1,0 @@
-# TEST ONLY: mapping used by docker-compose.test.yml. Group IDs are the mock tenant's.
-group_mappings:
-  0e2e0000-0000-4000-8000-0000000000a1: {workspace: e2e-alpha, role: developer, groups: [backend]}
-  0e2e0000-0000-4000-8000-0000000000a2: {workspace: e2e-alpha, role: admin}
-  0e2e0000-0000-4000-8000-0000000000a3: {workspace: e2e-beta, role: operator, groups: [oncall]}

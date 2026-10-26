@@ -1,14 +1,16 @@
 #!/bin/sh
-# AGPLv3 §13: writes the Corresponding Source of the images this stack runs to local/dist/,
-# which Caddy serves read-only at /source/. One archive per distinct image revision, taken
-# with `git archive` from that commit (local/ included), so git-ignored files (local/.env,
-# local/secrets/) can never be included. Run it after every build.sh.
+# AGPLv3 §13: writes the Corresponding Source of the images a deployment runs to local/dist/,
+# which the deployment's Caddy serves read-only at /source/. WINDMILL_IMAGE and
+# ENTRA_GATEWAY_IMAGE name the images when they are not the local build.sh tags. One archive per distinct image revision, taken
+# with `git archive` from that commit (local/ included), so git-ignored files can never be
+# included. Run it after every build.sh.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 
 revs=""
-for img in windmill-custom:local windmill-entra:local; do
+images="${WINDMILL_IMAGE:-windmill-custom:local} ${ENTRA_GATEWAY_IMAGE:-windmill-entra:local}"
+for img in $images; do
 	rev=$(docker image inspect "$img" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null) || {
 		echo "make-source-bundle.sh: image $img not found; run local/scripts/build.sh" >&2
 		exit 1
@@ -40,9 +42,10 @@ done
 
 {
 	echo "Source code of the modified Windmill server (GNU AGPLv3) running on this instance,"
-	echo "and of its Entra sign-in gateway. Upstream: https://github.com/windmill-labs/windmill"
+	echo "and of its Entra sign-in gateway. Fork: https://github.com/executivecentre/windmill"
+	echo "Upstream: https://github.com/windmill-labs/windmill"
 	echo
-	for img in windmill-custom:local windmill-entra:local; do
+	for img in $images; do
 		rev=$(docker image inspect "$img" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 		echo "$img  built from commit $rev  ->  windmill-custom-src-$rev.tar.gz"
 	done

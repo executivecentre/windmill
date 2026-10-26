@@ -13,184 +13,52 @@ No Enterprise code is built, and no Enterprise license is used: the cargo featur
 `oss`. Every upstream file this fork changes is listed with its reason in
 [`PATCHES.md`](PATCHES.md).
 
-## What runs
+## Repository layout
 
-| Service | Image | Reachable from |
-| --- | --- | --- |
-| `caddy` | `caddy:2.11.4` (pinned) | host: `CADDY_HTTPS_BIND` (443) and `CADDY_HTTP_BIND` (80, redirects to https) |
-| `windmill_server` | `windmill-custom:local` | Caddy only |
-| `windmill_worker` ×`WINDMILL_WORKER_REPLICAS` (default 1), `windmill_worker_native` | `windmill-custom:local` | no inbound |
-| `entra_gateway` | `windmill-entra:local` | Caddy only (`/sso/*`) |
-| `db` | `postgres:18` (pinned) | internal only. Holds databases `windmill` and `entra_gateway`. |
-| `windmill_extra` | official `windmill-extra` (pinned) | Caddy (`/ws/*`): language servers only. Debugger and multiplayer are off. `WINDMILL_EXTRA_REPLICAS=0` runs no official image at all, at the cost of editor code intelligence. |
+This repository holds the code and the image build. How the images run (compose files for
+development and production, Caddy, secrets, the deploy scripts and the end-to-end tests) lives
+in the deployment repository, which includes this one as the submodule `windmill-custom/`; see
+its `deploy/README.md`.
 
-The indexer (full-text job search) is Enterprise-only and runs with 0 replicas. Caddy is the only
-service that publishes host ports.
-
-Caddy's routing (`Caddyfile`):
-
-- `/user/login` is Windmill's own login page; nothing redirects it to the gateway. Once the
-  gateway is configured, the page also shows **Continue with Microsoft**, which opens
-  `/sso/login`. Password sign-in (`/api/auth/login`) is allowed only from `ADMIN_ALLOWED_CIDRS`
-  and gets 403 from anywhere else. This is the break-glass path.
-- `SUPERADMIN_SECRET` (in the `Authorization` header, the `token` cookie or `?token=`) gets 403
-  from outside `ADMIN_ALLOWED_CIDRS`. The gateway uses it on the internal network only. Caddy
-  reads the secret file for this, so `windmill_superadmin_secret` is also mounted into `caddy`.
-- `/ws/*` (`windmill_extra`'s language servers, which do no authentication of their own) needs
-  a valid Windmill session or token: Caddy checks it with `/api/users/whoami` first.
-- `/api/users/login_links`, `/api/users/create` and `/api/users/overwrite` always get 403
-  through Caddy. Only the gateway calls them, on the internal network.
-- `/source/` serves the source code (see [Source code offer](#source-code-offer-agplv3-13)).
-- Caddy writes no access log. Its error log is excluded, because error entries carry request
-  URIs, and two of those URIs are credentials (`/api/auth/login_link/*` and
-  `/sso/callback?code=…`).
-
-## First-time setup
-
-All commands run from the repository root.
-
-1. **Configuration.** `cp local/.env.example local/.env`, then fill in `PUBLIC_HOST`,
-   `PUBLIC_BASE_URL`, `ADMIN_ALLOWED_CIDRS`, `CADDY_TLS` (see [TLS](#tls)) and the Entra
-   values.
-2. **Secrets.** `local/scripts/init-secrets.sh` generates every random secret into
-   `local/secrets/` ([details](secrets/README.md)). Then write the Entra client secret to
-   `local/secrets/entra_client_secret`.
-3. **Entra app registration and group mapping.** Follow
-   [entra-gateway/README.md](entra-gateway/README.md#entra-app-registration). Then
-   `cp local/entra-gateway/group-mappings.example.yaml local/group-mappings.yaml` and put your
-   group Object IDs and workspace ids in it.
-4. **Build.** `local/scripts/build.sh` builds both images from the current commit; the Windmill
-   image took 17 minutes with 18 CPUs and 16 GB of RAM given to Docker (arm64). Build from a clean tree: images built with
-   uncommitted changes are labelled `<sha>-dirty`, and those can't be published as source.
-5. **Source bundle.** `local/scripts/make-source-bundle.sh`.
-6. **Start.** `local/scripts/up.sh`. It refuses to start while a secret or the mapping file is
-   missing. Compose mounts file secrets with their host owner and mode, so `up.sh` runs the
-   gateway as the owner of `local/secrets/` (`GATEWAY_USER`); if that owner is root, it asks you
-   to `chown 65532:65532` the gateway's four secret files instead. Before the Entra values exist you can start everything except the gateway:
-   `local/scripts/up.sh db windmill_server windmill_worker windmill_worker_native windmill_extra caddy`.
-   `/sso/*` then shows a "single sign-on is unavailable" page. Windmill and the gateway apply
-   their own database migrations at start.
-7. **Break-glass admin.** Windmill seeds `admin@windmill.dev` with the password `changeme` in
-   every new database. `local/scripts/set-admin-password.sh` replaces it with
-   `local/secrets/windmill_admin_password` (it does nothing once the seeded password stops
-   working). Then, from an address in `ADMIN_ALLOWED_CIDRS`, open
-   `${PUBLIC_BASE_URL}/user/login`, sign in as `admin@windmill.dev` with that password,
-   and create the workspaces your mapping file names. The gateway never creates workspaces.
-8. **Check.** `local/scripts/smoke.sh` should print only PASS lines, plus one SKIP if the
-   gateway is not running yet.
-
-Entra users who sign in are created as `entra` accounts. They are never instance superadmins,
-and Windmill refuses to set a password on an `entra` account. Give instance administration to
-the break-glass account only.
-
-Leave the instance setting **Disable password login** (Instance settings → SSO) off. It refuses
-every password sign-in, the break-glass admin's included, within seconds. If it gets turned on,
-clear it from an address in `ADMIN_ALLOWED_CIDRS` with the superadmin secret:
-
-```sh
-curl -X POST -H "Authorization: Bearer $(cat local/secrets/windmill_superadmin_secret)" \
-  -H 'Content-Type: application/json' -d '{"value":false}' \
-  "${PUBLIC_BASE_URL}/api/settings/global/disable_password_login"
-```
-
-## Access changes and sign-out
-
-- **Sign out** in Windmill ends the Windmill session and returns to the login page. The browser's
-  Microsoft session stays open, so **Continue with Microsoft** may sign the same person in
-  without a prompt. `${PUBLIC_BASE_URL}/sso/logout` also ends the Entra session.
-- **Removing a user from an Entra group** takes effect at their next sign-in, or at the next
-  reconcile run (`RECONCILE_INTERVAL`, default 15m), whichever comes first. Windmill caches a
-  session's permissions for up to 120 s, so an open session can keep a removed workspace that
-  long after the reconcile. In the E2E run (1-minute interval) it took 45 s to disable the
-  membership and 70 s more for the open session to lose it.
-- **Disabling the account in Entra** disables the Windmill account and its memberships at the
-  next reconcile run. Its sessions and API tokens stop working at once.
-- **Automations:** a schedule runs as the workspace member who owns it. Once the gateway
-  disables that membership, the schedule's next run fails and Windmill switches the schedule
-  off; nothing turns it back on automatically. Measured on the E2E stack: with only the account
-  disabled, a 15-second schedule kept running; with the membership disabled, it ran once more
-  and was switched off. Give automations that must outlive one person to a shared owner.
-
-## TLS
-
-`CADDY_TLS` picks one of three modes:
-
-| Value | Use |
+| Path | What it is |
 | --- | --- |
-| an e-mail address, e.g. `ops@corp.example` | Public certificate from Let's Encrypt (automatic HTTPS). `PUBLIC_HOST` must resolve to this host from the internet, and ports 80 and 443 must be reachable. |
-| `internal` | Caddy's own CA, for LAN or test use. Browsers must trust its root, which you export with `docker compose … exec caddy cat /data/caddy/pki/authorities/local/root.crt`. |
-| `/certs/cert.pem /certs/key.pem` | Your own certificate. Uncomment the `./local/certs:/certs:ro` volume of `caddy` in `docker-compose.local.yml` and put the PEM files in `local/certs/` (git-ignored). |
+| upstream files listed in `PATCHES.md` | the patches (kept to a few lines each) |
+| `Dockerfile` | upstream's, unchanged; `build.sh` passes the features |
+| `local/entra-gateway/` | the sign-in gateway (Go), with its own `Dockerfile` |
+| `local/scripts/build.sh` | builds `windmill-custom:local` and `windmill-entra:local` |
+| `local/scripts/make-source-bundle.sh` | AGPL source archives into `local/dist/` |
+| `local/scripts/check-upstream.sh`, `local/edition-limits.txt` | checks the patch set against upstream |
 
-`PUBLIC_BASE_URL` must be `https://…`, and include the port when it isn't 443. Windmill marks
-its session cookie `Secure` only for an https base URL.
+Remotes: `origin` is this fork (`https://github.com/executivecentre/windmill.git`), `upstream`
+is Windmill (`https://github.com/windmill-labs/windmill.git`, read-only). The fork's `main`
+tracks upstream (GitHub's **Sync fork**), and `custom/unlimited-entra` is `main` at a release
+plus the patches.
 
-## Everyday operations
+## Building
 
-`docker compose` must always get both files and the env file. The scripts do this for you:
-
-```sh
-docker compose --env-file local/.env -f docker-compose.yml -f docker-compose.local.yml <command>
-```
-
-| Task | Command |
-| --- | --- |
-| Start or update | `local/scripts/up.sh` (`up -d`; extra arguments are passed on, e.g. a service name or `--force-recreate`) |
-| Smoke test | `local/scripts/smoke.sh` |
-| Backup | `local/scripts/backup.sh`: a full `pg_dumpall` to `local/backups/`, checked before it reports success. Copy `local/secrets/` with it. |
-| Gateway audit trail | see [entra-gateway/README.md](entra-gateway/README.md#behaviour) (`sync_event`) |
-| Logs | `docker compose … logs -f windmill_server entra_gateway` |
-
-**Restoring a backup** onto a new, empty `db` volume:
-
-1. Put the `local/secrets/` from the backup's time back in place. The dump restores the roles'
-   old passwords, so the URL secrets must match.
-2. `local/scripts/up.sh db`, and wait until it is healthy.
-3. `gzip -dc local/backups/<file>.sql.gz | docker compose … exec -T -u postgres db psql -U postgres -q`
-4. `local/scripts/up.sh`
-
-Step 3 prints four expected errors, because the fresh volume already has the `postgres` and
-`entra_gateway` roles and both databases. Every other statement must succeed.
+`local/scripts/build.sh` builds both images from the current commit; the Windmill image took 17
+minutes with 18 CPUs and 16 GB of RAM given to Docker (arm64). Build from a clean tree: images
+built with uncommitted changes are labelled `<sha>-dirty`, and those can't be published as
+source. The previous images stay available as `windmill-custom:prev` and `windmill-entra:prev`.
+Then run `local/scripts/make-source-bundle.sh`.
 
 ## Testing
 
-`local/test/` holds a TEST-ONLY end-to-end run against a mock Entra ID (OIDC with PKCE, and
-Microsoft Graph), as the separate compose project `windmill-custom-e2e` on
-https://localhost:3443. Its database lives in tmpfs, and its secrets and certificates are generated
-into `local/test/run/` (git-ignored). It never touches the main stack's volumes.
-
-| Command | What it does |
-| --- | --- |
-| `local/test/e2e.sh` | start the project, then `smoke.sh`, the SSO driver (sign-in, roles, groups, jobs, tokens, webhooks, `wmill` CLI, replay and denial cases, reconcile), and a scan of every container log for credentials |
-| `local/test/e2e.sh browser` | a real browser (Playwright from `frontend/node_modules`) through the SPA's sign-in, sign-out and session-expiry paths |
-| `local/test/e2e.sh down` | remove the project's containers (named volumes are kept) |
-
-A real Entra tenant is not part of these tests.
-
-## Existing database volumes
-
-`local/db-init/` runs only when the `db` volume is created. When you switch an existing
-Windmill database to this stack, first run `local/scripts/backup.sh` (or `pg_dumpall` with your
-old stack) and check that the dump is non-empty. Then create the gateway's database and role by
-hand, with the same files:
-
-```sh
-dc() { docker compose --env-file local/.env -f docker-compose.yml -f docker-compose.local.yml "$@"; }
-dc up -d db
-dc exec -T -u postgres db psql -U postgres -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/10-entra-gateway.sql
-dc exec -T -u postgres db sh /docker-entrypoint-initdb.d/20-entra-gateway-hba.sh
-dc exec -T -u postgres db psql -U postgres -c 'select pg_reload_conf()'
-```
-
-The SQL reads the role's password from the `entra_gateway_db_password` secret, which compose
-mounts into `db`. The hba script lets the `entra_gateway` role connect only to its own database.
-Run each step once.
+- `oss_user_management`, `oss_entra_gateway_flow`, `users` and `login_link` in
+  `backend/windmill-api-integration-tests`;
+- `go test -race ./...` in `local/entra-gateway` (the integration tests need
+  `GATEWAY_TEST_DATABASE_URL`);
+- the frontend type check (`npm run check`) and `npx vitest run src/lib/components/sessions/`
+  from `frontend/`;
+- the deployment repository's `deploy/test/e2e.sh` and `deploy/test/e2e.sh browser`, against
+  the built images.
 
 ## Upgrading to a newer upstream release
 
-1. Back up (`local/scripts/backup.sh`, plus a copy of `local/secrets/`).
+1. Back up the deployment (its `deploy/scripts/backup.sh`, plus a copy of `deploy/secrets/`).
 2. Rebase a copy of the branch, so the deployed one stays intact until the new one passes:
    ```sh
-   git fetch origin --tags
+   git fetch upstream --tags
    local/scripts/check-upstream.sh <current-base>     # the commit in PATCHES.md "Baseline"
    git switch -c upgrade/<tag> custom/unlimited-entra
    git rebase --onto <tag> <current-base>
@@ -201,32 +69,32 @@ Run each step once.
    `PATCHES.md`. Then run `local/scripts/check-upstream.sh <tag>`. It fails on a lost or
    unrecorded patch, and on any new edition-limit hit (possibly a new cap) until it is reviewed
    and recorded, as `PATCHES.md` "Checking the patch set" describes.
-3. Run the fork's tests:
-   - `oss_user_management`, `oss_entra_gateway_flow`, `users` and `login_link` in
-     `backend/windmill-api-integration-tests`;
-   - `go test -race ./...` for the gateway;
-   - the frontend type check (`npm run check`) and
-     `npx vitest run src/lib/components/sessions/` from `frontend/`;
-   - `local/test/e2e.sh` and `local/test/e2e.sh browser` (after the build in step 4).
-   When everything passes, point the branch at the result:
-   `git branch -f custom/unlimited-entra upgrade/<tag>` (run while `upgrade/<tag>` is checked out).
-4. `local/scripts/build.sh`. The previous images stay available as `windmill-custom:prev` and
-   `windmill-entra:prev`.
-5. `local/scripts/make-source-bundle.sh`, then `local/scripts/up.sh`, then
-   `local/scripts/smoke.sh`.
-6. Record the new baseline commit in `PATCHES.md`.
+3. Run the [tests](#testing) (the e2e run after the build in step 4).
+4. `local/scripts/build.sh`, then `local/scripts/make-source-bundle.sh`.
+5. Publish. The rebase rewrites the branch, so first tag the commit it replaces: the
+   deployment's older submodule pointers name it, and an untagged commit disappears from the
+   fork after a force push.
+   ```sh
+   git tag deployed/<old-version> custom/unlimited-entra && git push origin deployed/<old-version>
+   git branch -f custom/unlimited-entra upgrade/<tag>    # while upgrade/<tag> is checked out
+   git push --force-with-lease origin custom/unlimited-entra
+   ```
+6. In the deployment repository: check out the new commit in `windmill-custom/`, run
+   `deploy/scripts/up.sh` and `deploy/scripts/smoke.sh`, and commit the new submodule pointer.
+7. Record the new baseline commit in `PATCHES.md`.
 
 **Rollback:** Windmill migrations only move forward. Going back means restoring the backup
 from step 1 *and* retagging `:prev` as `:local`. Swapping the image alone is not enough.
 
 ## Source code offer (AGPLv3 §13)
 
-Windmill is licensed under the GNU AGPLv3, and this deployment runs a modified version. Users
-can download its source code from `${PUBLIC_BASE_URL}/source/`: one archive per commit an image
-was built from, plus `README.txt` and `SHA256SUMS`. Every page the sign-in gateway shows links
-to it. `make-source-bundle.sh` writes the archives with `git archive` from the images' revision
-labels, so the archives always match what runs, and git-ignored files (`local/.env`,
-`local/secrets/`) are never included. Rerun it after every build.
+Windmill is licensed under the GNU AGPLv3, and a deployment of this build runs a modified
+version, so it must offer users the source. `make-source-bundle.sh` writes one archive per
+commit an image was built from, plus `README.txt` and `SHA256SUMS`, into `local/dist/`, using
+`git archive` on the images' revision labels: the archives always match what runs, and
+git-ignored files are never included. The deployment's Caddy serves the directory at
+`${PUBLIC_BASE_URL}/source/`, and every page the sign-in gateway shows links to it. Rerun it
+after every build.
 
 ## Limits of the Community Edition
 

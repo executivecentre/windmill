@@ -73,8 +73,8 @@ docker compose … exec db psql -U postgres -d entra_gateway \
 
    Leave *Implicit grant* (ID tokens / access tokens) **unticked**: the gateway uses the
    authorization-code flow with PKCE. Leave *Front-channel logout URL* empty.
-3. **Certificates & secrets → New client secret.** Put the value in
-   `local/secrets/entra_client_secret`, and note the expiry date: sign-in stops when the
+3. **Certificates & secrets → New client secret.** Put the value in the
+   deployment's `deploy/secrets/entra_client_secret`, and note the expiry date: sign-in stops when the
    secret expires.
 4. **API permissions → Add → Microsoft Graph → Application permissions → `User.Read.All`**,
    then **Grant admin consent**. This is the only permission needed. Graph returns each group
@@ -86,7 +86,7 @@ docker compose … exec db psql -U postgres -d entra_gateway \
 6. Copy the **Directory (tenant) ID** to `ENTRA_TENANT_ID` and the **Application (client) ID**
    to `ENTRA_CLIENT_ID`.
 7. For each group you want to map, copy its **Object ID** (Groups → the group → Overview)
-   into `local/group-mappings.yaml`.
+   into the deployment's `deploy/group-mappings.yaml`.
 
 ## Configuration
 
