@@ -96,8 +96,13 @@ the break-glass account only.
   session's permissions for up to 120 s, so an open session can keep a removed workspace that
   long after the reconcile. In the E2E run (1-minute interval) it took 45 s to disable the
   membership and 70 s more for the open session to lose it.
-- **Disabling the account in Entra** disables the Windmill account at the next reconcile run,
-  and its sessions stop working at once.
+- **Disabling the account in Entra** disables the Windmill account and its memberships at the
+  next reconcile run. Its sessions and API tokens stop working at once.
+- **Automations:** a schedule runs as the workspace member who owns it. Once the gateway
+  disables that membership, the schedule's next run fails and Windmill switches the schedule
+  off; nothing turns it back on automatically. Measured on the E2E stack: with only the account
+  disabled, a 15-second schedule kept running; with the membership disabled, it ran once more
+  and was switched off. Give automations that must outlive one person to a shared owner.
 
 ## TLS
 

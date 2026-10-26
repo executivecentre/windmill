@@ -386,6 +386,10 @@ func TestDeprovisionAndReenable(t *testing.T) {
 		if id := h.identity(oid(7)); !id.DisabledByGateway {
 			t.Fatal("disable not attributed to the gateway")
 		}
+		// Schedules and triggers run as the workspace member, whatever the account's state.
+		if !h.wm.member("eng", "frank@corp.example").Disabled {
+			t.Fatal("membership left enabled after Graph 404")
+		}
 		h.denied(h.login(oid(7), ""), http.StatusForbidden, "not found in the directory")
 	})
 	t.Run("disabled in Entra then re-enabled", func(t *testing.T) {
@@ -397,10 +401,16 @@ func TestDeprovisionAndReenable(t *testing.T) {
 		if !h.wm.user("frank@corp.example").Disabled {
 			t.Fatal("account not disabled after accountEnabled=false")
 		}
+		if !h.wm.member("eng", "frank@corp.example").Disabled {
+			t.Fatal("membership left enabled after accountEnabled=false")
+		}
 		h.graph.setEnabled(oid(7), true)
 		h.signedIn(h.login(oid(7), ""))
 		if h.wm.user("frank@corp.example").Disabled {
 			t.Fatal("gateway did not re-enable an account it disabled")
+		}
+		if h.wm.member("eng", "frank@corp.example").Disabled {
+			t.Fatal("gateway did not re-enable the membership it disabled")
 		}
 	})
 	t.Run("administrator-disabled account stays disabled", func(t *testing.T) {

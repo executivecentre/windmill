@@ -36,10 +36,16 @@ browser ◀──302 to rd── /sso/callback ◀──────────
   login type to `entra`, which ends its password sign-in. Accounts disabled by an
   administrator are never adopted, and an email already linked to a different Entra object is
   never handed over.
-- **Deprovisioning:** when a user loses every mapping, or is disabled or deleted in Entra, the
-  gateway disables their memberships, or their whole account, at their next sign-in attempt
-  or the next reconcile run (`RECONCILE_INTERVAL`, default 15m). It re-enables only what it
-  disabled itself. If a reconcile run hits a Graph error, that run changes nothing.
+- **Deprovisioning:** when a user loses a mapping, the gateway disables that workspace
+  membership; when the user is disabled or deleted in Entra, it disables every membership it
+  manages and the whole account. Both happen at the user's next sign-in attempt or the next
+  reconcile run (`RECONCILE_INTERVAL`, default 15m). It re-enables only what it disabled
+  itself. If a reconcile run hits a Graph error, that run changes nothing.
+- **The user's automations:** Windmill keeps running a disabled *account*'s schedules; a
+  disabled *membership* stops them. The next run of each of the member's schedules in that
+  workspace fails with "user … not found in workspace", and Windmill then turns that schedule
+  off. Re-enabling the membership does not turn schedules back on: a workspace admin must, or
+  should reassign them first. Tokens the user created die with the account.
 - **Managed state only:** the gateway changes memberships and group members it created, and
   leaves anything an administrator added by hand alone.
 - **Logout:** `/sso/logout` ends the Windmill session server-side, clears the cookie and
