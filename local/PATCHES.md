@@ -146,7 +146,11 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 ### `backend/windmill-api/src/users_oss.rs`
 
 - **Change**: the three `#[cfg(not(feature = "private"))]` stubs that returned "not implemented"
-  are implemented with runtime `sqlx::query*` (no `query!` macros, so `backend/.sqlx` is
+  now each delegate in one line to the fork-owned
+  `backend/windmill-api/src/users_oss_local.rs`, declared next to the stubs as
+  `#[path = "users_oss_local.rs"] mod local;` (also `cfg(not(feature = "private"))`). Their
+  signatures and the rest of the upstream file are unchanged (+8 −9 lines). The implementations
+  in `users_oss_local.rs` use runtime `sqlx::query*` (no `query!` macros, so `backend/.sqlx` is
   unchanged):
   - `hash_password`: refuses passwords shorter than 12 characters (`BadRequest`), then hashes
     with the shared `Argon2::default()` (Argon2id, PHC string). Also covers `reset_password`.
@@ -170,8 +174,11 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
   in `tests/users.rs` is gated on `enterprise` + `private`; and
   `tests/oss_entra_gateway_flow.rs` (new file), which replays the Windmill API calls the
   gateway makes, in order, authenticated with `SUPERADMIN_SECRET`.
-- **Re-apply**: if upstream changes the stub signatures, adapt the bodies; if upstream ever ships
-  an OSS implementation, drop this patch and the new test file and rerun the tests against it.
+- **Re-apply**: take upstream's file, re-add the `mod local;` declaration and replace each of the
+  three stub bodies with the `local::…` call. If upstream changes a stub signature, change the
+  matching `pub(super)` function in `users_oss_local.rs` to match. If upstream ever ships an OSS
+  implementation, drop this patch, `users_oss_local.rs` and the new test files, and rerun the
+  tests against upstream's version.
 
 ### `frontend/src/lib/components/sessions/sessionState.svelte.ts`
 
