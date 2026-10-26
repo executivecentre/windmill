@@ -92,6 +92,25 @@ const path = (u) => { const x = new URL(u); return (x.host + x.pathname).replace
 	check('an expired session reaches /sso/login', !!ssoNav, navs.map(path).join(' > '))
 	check('…keeping the page as rd', !!ssoNav && new URL(ssoNav).searchParams.get('rd') === '/resources',
 		ssoNav ? `rd=${new URL(ssoNav).searchParams.get('rd')}` : '')
+
+	// 5. Instance settings SSO tab (AuthSettings.svelte patch): the gateway notice, not upstream's
+	// provider forms. Signs in as the break-glass admin; this host is in ADMIN_ALLOWED_CIDRS.
+	const admin = await browser.newContext({ ignoreHTTPSErrors: true })
+	const adminPw = fs.readFileSync(`${RUN}/secrets/windmill_admin_password`, 'utf8').trim()
+	const login = await admin.request.post(`${BASE}/api/auth/login`,
+		{ data: { email: 'admin@windmill.dev', password: adminPw } })
+	check('break-glass admin signs in from an allowed address', login.status() === 200, `${login.status()}`)
+	const settings = await admin.newPage()
+	await settings.goto(`${BASE}/user/instance_settings`)
+	await settings.getByRole('button', { name: 'Advanced setup' }).click()
+	await settings.getByText(/^SSO$/).first().click()
+	await settings.getByText('SSO is provided by the Microsoft Entra ID gateway').waitFor({ timeout: 15000 })
+		.catch(() => {})
+	const ssoTab = await settings.locator('body').innerText()
+	check('SSO settings tab shows the Entra gateway notice',
+		ssoTab.includes('SSO is provided by the Microsoft Entra ID gateway'))
+	check('…and not the CE SSO-user limit or upstream provider forms',
+		!ssoTab.includes('Limited to 10 SSO users') && !/Okta/.test(ssoTab))
 	await browser.close()
 	process.exit(failed)
 })().catch((e) => { console.log(`FAIL  browser run: ${e.message.split('\n')[0]}`); process.exit(1) })

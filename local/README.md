@@ -87,6 +87,16 @@ Entra users who sign in are created as `entra` accounts. They are never instance
 and Windmill refuses to set a password on an `entra` account. Give instance administration to
 the break-glass account only.
 
+Leave the instance setting **Disable password login** (Instance settings → SSO) off. It refuses
+every password sign-in, the break-glass admin's included, within seconds. If it gets turned on,
+clear it from an address in `ADMIN_ALLOWED_CIDRS` with the superadmin secret:
+
+```sh
+curl -X POST -H "Authorization: Bearer $(cat local/secrets/windmill_superadmin_secret)" \
+  -H 'Content-Type: application/json' -d '{"value":false}' \
+  "${PUBLIC_BASE_URL}/api/settings/global/disable_password_login"
+```
+
 ## Access changes and sign-out
 
 - **Sign out** in Windmill ends at the gateway's `/sso/logout`, which ends the Entra session
