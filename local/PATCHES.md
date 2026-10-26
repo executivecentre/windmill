@@ -182,38 +182,35 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 
 ### `frontend/src/lib/components/sessions/sessionState.svelte.ts`
 
-- **Change**: removed the `CE_MAX_NON_ADMIN_WORKSPACES` guard that threw before materialising a
-  pending fork, and the now-unused `enterpriseLicense` import.
+- **Change**: one line: the local `CE_MAX_NON_ADMIN_WORKSPACES` in `commitSessionWorkspace` is
+  `Number.POSITIVE_INFINITY` instead of `2`, so the guard that threw before materialising a pending
+  fork never fires. The guard, its `enterpriseLicense` check and the store are unchanged.
 - **Reason**: UI mirror of the removed backend workspace cap.
-- **Re-apply**: delete the block that compares the non-`admins` workspace count with
-  `CE_MAX_NON_ADMIN_WORKSPACES`; drop `enterpriseLicense` from the import if nothing else uses it.
-  The `enterpriseLicense` store itself is not changed.
+- **Re-apply**: set the constant to `Number.POSITIVE_INFINITY` again. If upstream renames it or
+  moves the cap, neutralise the count comparison only.
 
 ### `frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte`
 
-- **Change**: removed `CE_MAX_NON_ADMIN_WORKSPACES`, `nonAdminWorkspaceCount`,
-  `ceWorkspaceCapReached`, `forkAffordanceOpen` and `showForkUpsell`, the disabled
-  "Workspace limit reached" row, and the unused `enterpriseLicense` import. `showCreateFork` is now
-  the former `forkAffordanceOpen` condition.
+- **Change**: one line: `CE_MAX_NON_ADMIN_WORKSPACES` is `Number.POSITIVE_INFINITY` instead of
+  `2`, so `ceWorkspaceCapReached` is always false: the create-fork row shows and the disabled
+  "Workspace limit reached" upsell row never renders. Nothing else changes.
 - **Reason**: UI mirror of the removed backend workspace cap.
-- **Re-apply**: make `showCreateFork` equal to the structural gate (`allowCreateFork &&
-  forksGateOpen && (onCreateFork || onRequestCreateFork) && root`) and delete the upsell branch.
+- **Re-apply**: same as above.
 
 ### `frontend/src/lib/components/AuthSettings.svelte`
 
-- **Change**: the SSO tab content (the "Limited to 10 SSO users" alert, the
-  require-preexisting-user toggle, all built-in and custom SSO provider forms and the
-  "Add custom SSO client" popover) is replaced by one `Alert` stating that SSO is provided by the
-  Microsoft Entra ID gateway at `/sso/login`. Imports and helpers used only by that tab
-  (`OktaSetting`, `Auth0Setting`, `KeycloakSetting`, `CustomSso`, `AuthentikSetting`,
-  `AutheliaSetting`, `PocketIdSetting`, `KanidmSetting`, `ZitadelSetting`, `NextcloudSetting`,
-  `Popover`, the `sso*` state and handlers) are removed because the frontend type check runs with
-  `noUnusedLocals` and `--threshold warning`.
+- **Change**: insertions only, plus one changed line. A `const ENTRA_GATEWAY_SSO = true` after
+  the imports, and a new first branch `{#if tab === 'sso' && ENTRA_GATEWAY_SSO}` that shows a
+  header and one `Alert` stating that SSO is provided by the Microsoft Entra ID gateway at
+  `/sso/login`. Upstream's `{#if tab === 'sso'}` becomes `{:else if tab === 'sso'}`, so its
+  content (the "Limited to 10 SSO users" alert, the require-preexisting-user toggle, the built-in
+  and custom SSO provider forms) is kept verbatim but never renders. Keeping it also keeps every
+  upstream import and helper in use, so `noUnusedLocals` stays quiet.
 - **Reason**: OSS `build_oauth_clients`/`list_logins` return no login clients, so that form
   configured nothing. The OAuth (resource connect) and SCIM/SAML tabs and every other
   license-gated control are unchanged.
-- **Re-apply**: replace the body of the `{#if tab === 'sso'}` branch (after the
-  `SettingsPageHeader`) with the alert, then remove whatever the type check reports as unused.
+- **Re-apply**: take upstream's file, re-add the constant and the new first branch, and turn
+  upstream's SSO `{#if}` into `{:else if}`. Upstream edits inside the SSO tab need no action.
 
 ### `backend/windmill-api-workspaces/src/remote_deploy.rs`
 
