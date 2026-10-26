@@ -181,15 +181,28 @@ Run each step once.
 ## Upgrading to a newer upstream release
 
 1. Back up (`local/scripts/backup.sh`, plus a copy of `local/secrets/`).
-2. `git fetch origin`, then rebase `custom/unlimited-entra` onto the release commit or tag.
-   Resolve conflicts with the **Re-apply** notes in `PATCHES.md`. Then rerun the edition-limit
-   sweep recorded there, to catch any new cap.
+2. Rebase a copy of the branch, so the deployed one stays intact until the new one passes:
+   ```sh
+   git fetch origin --tags
+   local/scripts/check-upstream.sh <current-base>     # the commit in PATCHES.md "Baseline"
+   git switch -c upgrade/<tag> custom/unlimited-entra
+   git rebase --onto <tag> <current-base>
+   ```
+   Most fork changes live in fork-owned files (`local/`, the files under "Files added outside
+   `local/`"), which never conflict. The upstream patches are kept to a few lines each, so a
+   conflict means upstream edited that exact spot. Resolve it with the file's **Re-apply** note in
+   `PATCHES.md`. Then run `local/scripts/check-upstream.sh <tag>`. It fails on a lost or
+   unrecorded patch, and on any new edition-limit hit (possibly a new cap) until it is reviewed
+   and recorded, as `PATCHES.md` "Checking the patch set" describes.
 3. Run the fork's tests:
-   - `oss_user_management`, `oss_entra_gateway_flow` and `login_link` in
+   - `oss_user_management`, `oss_entra_gateway_flow`, `users` and `login_link` in
      `backend/windmill-api-integration-tests`;
    - `go test -race ./...` for the gateway;
-   - the frontend type check;
+   - the frontend type check (`npm run check`) and
+     `npx vitest run src/lib/components/sessions/` from `frontend/`;
    - `local/test/e2e.sh` and `local/test/e2e.sh browser` (after the build in step 4).
+   When everything passes, point the branch at the result:
+   `git branch -f custom/unlimited-entra upgrade/<tag>` (run while `upgrade/<tag>` is checked out).
 4. `local/scripts/build.sh`. The previous images stay available as `windmill-custom:prev` and
    `windmill-entra:prev`.
 5. `local/scripts/make-source-bundle.sh`, then `local/scripts/up.sh`, then
