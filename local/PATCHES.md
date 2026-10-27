@@ -1,6 +1,6 @@
 # Local patches against upstream Windmill
 
-This branch, `custom/unlimited-entra`, is Windmill's open-source code with a few patches:
+This branch, `feature/custom-unlimited`, is Windmill's open-source code with a few patches:
 
 - no Community Edition quotas on users, SSO users, groups and workspaces;
 - SSO sign-in (Microsoft and the other providers of Instance settings → SSO), which the
@@ -28,13 +28,13 @@ Upstream commit `a72484b2aaeccbd5a2d19e71ee75d21494ea74f4` (`chore(main): releas
 ## Upgrading to a newer upstream release
 
 1. `git fetch upstream --tags`, then rebase a copy of the branch:
-   `git switch -c upgrade/<tag> custom/unlimited-entra && git rebase --onto <tag> <baseline>`.
+   `git switch -c upgrade/<tag> feature/custom-unlimited && git rebase --onto <tag> <baseline>`.
    A conflict means upstream changed a patched spot: the file's **Re-apply** note says what to keep.
 2. Run `local/scripts/check-upstream.sh <tag>` ([Checking the patch set](#checking-the-patch-set)),
    then the tests, and update the baseline above.
 3. Tag the commit being replaced, which deployments' submodule pointers name and a force push would
-   orphan: `git tag deployed/<old-version> custom/unlimited-entra`, and push the tag. Then move the
-   branch to `upgrade/<tag>` and `git push --force-with-lease origin custom/unlimited-entra`.
+   orphan: `git tag deployed/<old-version> feature/custom-unlimited`, and push the tag. Then move
+   the branch to `upgrade/<tag>` and `git push --force-with-lease origin feature/custom-unlimited`.
 
 Windmill's migrations only move forward: back up the database before a new release first runs.
 
