@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"entra-gateway/internal/config"
 	"entra-gateway/internal/oidc"
 	"entra-gateway/internal/sync"
 )
@@ -86,7 +87,7 @@ func New(s Settings, auth Authenticator, prov Provisioner, wm Windmill, db Pinge
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sso/login", s.login)
-	mux.HandleFunc("GET /sso/callback", s.callback)
+	mux.HandleFunc("GET "+config.CallbackPath, s.callback)
 	mux.HandleFunc("GET /sso/logout", s.logout)
 	mux.HandleFunc("GET /sso/logged-out", s.loggedOut)
 	// The login page offers Microsoft sign-in only while this answers 204.

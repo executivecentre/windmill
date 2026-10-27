@@ -59,7 +59,7 @@ func TestLoadValid(t *testing.T) {
 	if cfg.Issuer() != "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0" {
 		t.Fatalf("issuer %s", cfg.Issuer())
 	}
-	if cfg.RedirectURL() != "https://windmill.corp.example/sso/callback" {
+	if cfg.RedirectURL() != "https://windmill.corp.example/user/login_callback/microsoft" {
 		t.Fatalf("redirect %s", cfg.RedirectURL())
 	}
 	if cfg.ReconcileInterval != 15*time.Minute || cfg.LoginLinkTTL != 60 || cfg.AdoptExisting {
@@ -77,6 +77,7 @@ func TestLoadRejects(t *testing.T) {
 		"public URL with path": func(v, _ map[string]string) { v["PUBLIC_BASE_URL"] = "https://windmill.corp.example/app" },
 		"trailing slash":       func(v, _ map[string]string) { v["PUBLIC_BASE_URL"] = "https://windmill.corp.example/" },
 		"tenant not a GUID":    func(v, _ map[string]string) { v["ENTRA_TENANT_ID"] = "common" },
+		"only some ENTRA_*":    func(v, _ map[string]string) { delete(v, "ENTRA_CLIENT_SECRET_FILE") },
 		"secret and file":      func(v, _ map[string]string) { v["ENTRA_CLIENT_SECRET"] = "inline" },
 		"missing secret":       func(v, _ map[string]string) { delete(v, "WINDMILL_SUPERADMIN_SECRET_FILE") },
 		"unreadable secret":    func(_, f map[string]string) { delete(f, "/s/db") },
@@ -111,8 +112,43 @@ func TestLoadReportsEveryProblem(t *testing.T) {
 		t.Fatal("empty environment accepted")
 	}
 	var joined interface{ Unwrap() []error }
-	if !errors.As(err, &joined) || len(joined.Unwrap()) < 8 {
+	if !errors.As(err, &joined) || len(joined.Unwrap()) < 5 {
 		t.Fatalf("expected every missing variable to be reported, got: %v", err)
+	}
+}
+
+// Without ENTRA_*, a mapping file or domains the gateway runs like Windmill's own SSO: the app
+// registration comes from Windmill and every tenant user may sign in.
+func TestLoadWindmillConfiguredOpenAccess(t *testing.T) {
+	vars, files := baseVars()
+	for _, k := range []string{"ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET_FILE",
+		"GROUP_MAPPINGS_PATH", "ALLOWED_EMAIL_DOMAINS"} {
+		delete(vars, k)
+	}
+	cfg, err := Load(env(vars, files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EntraFromWindmill || cfg.Mappings != nil || cfg.TenantID != "" {
+		t.Fatalf("not windmill-configured open access: %+v", cfg)
+	}
+	if !cfg.DomainAllowed("a@any.example") || cfg.DomainAllowed("no-at-sign") {
+		t.Fatal("without ALLOWED_EMAIL_DOMAINS any well-formed address is allowed")
+	}
+	for name, args := range map[string][3]string{
+		"tenant name":  {"common", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "s"},
+		"client name":  {"11111111-2222-3333-4444-555555555555", "teams", "s"},
+		"empty secret": {"11111111-2222-3333-4444-555555555555", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", " "},
+	} {
+		if err := cfg.SetEntra(args[0], args[1], args[2]); err == nil {
+			t.Fatalf("SetEntra accepted %s", name)
+		}
+	}
+	if err := cfg.SetEntra("11111111-2222-3333-4444-555555555555", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", " s \n"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" || cfg.ClientSecret != "s" {
+		t.Fatalf("SetEntra not normalised: %+v", cfg)
 	}
 }
 

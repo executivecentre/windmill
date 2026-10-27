@@ -27,6 +27,8 @@ var ErrInvalidToken = errors.New("invalid ID token")
 type Identity struct {
 	TenantID string
 	ObjectID string
+	// AccessToken is the signed-in user's delegated token (Settings.ExtraScopes), never logged.
+	AccessToken string
 }
 
 // Settings configures a Client.
@@ -36,8 +38,10 @@ type Settings struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
-	HTTPClient   *http.Client
-	Now          func() time.Time
+	// ExtraScopes are requested beside openid and profile, e.g. Graph's User.Read.
+	ExtraScopes []string
+	HTTPClient  *http.Client
+	Now         func() time.Time
 }
 
 // Client holds the discovered provider. Discovery is retried until it succeeds; until then
@@ -128,7 +132,7 @@ func (c *Client) oauth() (*oauth2.Config, *gooidc.IDTokenVerifier, error) {
 		ClientSecret: c.s.ClientSecret,
 		Endpoint:     c.provider.Endpoint(),
 		RedirectURL:  c.s.RedirectURL,
-		Scopes:       []string{gooidc.ScopeOpenID, "profile"},
+		Scopes:       append([]string{gooidc.ScopeOpenID, "profile"}, c.s.ExtraScopes...),
 	}, c.verifier, nil
 }
 
@@ -166,7 +170,12 @@ func (c *Client) Exchange(ctx context.Context, code, verifier, nonce string) (Id
 	if !ok || raw == "" {
 		return Identity{}, fmt.Errorf("%w: token response has no id_token", ErrInvalidToken)
 	}
-	return c.verify(ctx, idv, raw, nonce)
+	id, err := c.verify(ctx, idv, raw, nonce)
+	if err != nil {
+		return Identity{}, err
+	}
+	id.AccessToken = tok.AccessToken
+	return id, nil
 }
 
 func (c *Client) verify(ctx context.Context, idv *gooidc.IDTokenVerifier, raw, nonce string) (Identity, error) {

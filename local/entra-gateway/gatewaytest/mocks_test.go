@@ -70,6 +70,7 @@ type idp struct {
 
 	mu         gosync.Mutex
 	codes      map[string]codeGrant
+	userTokens map[string]string // delegated access token -> oid
 	graphToken string
 	// mutate changes the ID-token claims; signWithOther signs with a key not in the JWKS.
 	mutate        func(map[string]any)
@@ -88,7 +89,7 @@ func newIDP(t *testing.T, sec *secrets) *idp {
 	}
 	p := &idp{t: t, tenant: "11111111-2222-3333-4444-555555555555", clientID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 		clientSecret: "client-secret-" + randHex(16), key: key, otherKey: other, kid: "test-key-1",
-		sec: sec, codes: map[string]codeGrant{}, now: time.Now}
+		sec: sec, codes: map[string]codeGrant{}, userTokens: map[string]string{}, now: time.Now}
 	sec.add(p.clientSecret)
 	mux := http.NewServeMux()
 	base := "/" + p.tenant
@@ -193,6 +194,9 @@ func (p *idp) token(w http.ResponseWriter, r *http.Request) {
 		at := "user-at-" + randHex(16)
 		p.sec.add(idt)
 		p.sec.add(at)
+		p.mu.Lock()
+		p.userTokens[at] = g.oid
+		p.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"access_token": at, "token_type": "Bearer", "expires_in": 3600, "id_token": idt})
 	default:
 		writeJSON(w, 400, map[string]string{"error": "unsupported_grant_type"})
@@ -225,6 +229,13 @@ func (p *idp) sign(claims map[string]any, withOther bool) string {
 		p.t.Fatal(err)
 	}
 	return input + "." + b64(sig)
+}
+
+// userTokenOID is the user a delegated access token was issued to, or "".
+func (p *idp) userTokenOID(tok string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.userTokens[tok]
 }
 
 func (p *idp) currentGraphToken() string {
@@ -261,6 +272,7 @@ type graphMock struct {
 func newGraph(t *testing.T, p *idp) *graphMock {
 	g := &graphMock{t: t, idp: p, users: map[string]graphUser{}, groups: map[string][]string{}, pageSize: 999}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1.0/me", g.me)
 	mux.HandleFunc("GET /v1.0/users/{oid}", g.user)
 	mux.HandleFunc("GET /v1.0/users/{oid}/transitiveMemberOf/microsoft.graph.group", g.memberOf)
 	g.srv = httptest.NewTLSServer(mux)
@@ -311,6 +323,24 @@ func (g *graphMock) setEnabled(oid string, enabled bool) {
 	u.AccountEnabled = enabled
 	g.users[oid] = u
 	g.mu.Unlock()
+}
+
+// me answers with the user a delegated (authorization-code) token was issued to.
+func (g *graphMock) me(w http.ResponseWriter, r *http.Request) {
+	oid := g.idp.userTokenOID(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if oid == "" {
+		writeJSON(w, 401, map[string]any{"error": map[string]string{"code": "InvalidAuthenticationToken"}})
+		return
+	}
+	g.mu.Lock()
+	g.calls++
+	u, ok := g.users[oid]
+	g.mu.Unlock()
+	if !ok {
+		writeJSON(w, 404, map[string]any{"error": map[string]string{"code": "Request_ResourceNotFound"}})
+		return
+	}
+	writeJSON(w, 200, u)
 }
 
 // gate applies auth and failure injection; it reports whether the request may proceed.
@@ -417,6 +447,7 @@ type windmillFake struct {
 	createCalls int
 	loggedOut   []string
 	failPrefix  string // requests under this path answer 500
+	oauths      map[string]any
 }
 
 var usernameUnsafe = regexp.MustCompile(`[^a-z0-9_]`)
@@ -433,6 +464,7 @@ func newWindmill(t *testing.T, sec *secrets, workspaces ...string) *windmillFake
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/users/list_as_super_admin", f.listUsers)
 	mux.HandleFunc("POST /api/users/create", f.createUser)
+	mux.HandleFunc("GET /api/settings/global/oauths", f.getOAuths)
 	mux.HandleFunc("POST /api/users/set_login_type/{email}", f.setLoginType)
 	mux.HandleFunc("POST /api/users/update/{email}", f.updateUser)
 	mux.HandleFunc("POST /api/users/login_links", f.loginLink)
@@ -800,4 +832,15 @@ func (l *logBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.buf.String()
+}
+
+func (f *windmillFake) setOAuths(v map[string]any) {
+	f.mu.Lock()
+	f.oauths = v
+	f.mu.Unlock()
+}
+
+// getOAuths runs behind auth, which holds f.mu.
+func (f *windmillFake) getOAuths(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, f.oauths)
 }

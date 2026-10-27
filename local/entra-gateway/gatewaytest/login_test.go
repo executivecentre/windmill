@@ -122,7 +122,7 @@ func TestCallbackStateAndCookieChecks(t *testing.T) {
 	})
 	t.Run("entra error parameter", func(t *testing.T) {
 		c, _ := h.startLogin("")
-		rec := h.get(publicBase+"/sso/callback?error=access_denied&error_description=%3Cscript%3Ex%3C%2Fscript%3E", c)
+		rec := h.get(publicBase+"/user/login_callback/microsoft?error=access_denied&error_description=%3Cscript%3Ex%3C%2Fscript%3E", c)
 		h.denied(rec, http.StatusForbidden, "did not complete")
 		if strings.Contains(rec.Body.String(), "<script>") {
 			t.Fatal("error_description reflected into the page")
@@ -130,9 +130,9 @@ func TestCallbackStateAndCookieChecks(t *testing.T) {
 	})
 	t.Run("non-GET refused", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		h.h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, publicBase+"/sso/callback", nil))
+		h.h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, publicBase+"/user/login_callback/microsoft", nil))
 		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("POST /sso/callback: %d", rec.Code)
+			t.Fatalf("POST /user/login_callback/microsoft: %d", rec.Code)
 		}
 	})
 }

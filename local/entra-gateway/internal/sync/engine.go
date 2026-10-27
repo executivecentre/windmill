@@ -41,6 +41,10 @@ type Settings struct {
 	Mappings      config.Mappings
 	DomainAllowed func(email string) bool
 	AdoptExisting bool
+	// OpenAccess (no group mappings) works like Windmill's own SSO: every tenant user may sign
+	// in, the user's profile comes from their delegated token, and the gateway leaves workspace
+	// membership to Windmill administrators.
+	OpenAccess bool
 }
 
 // Engine applies Entra state to Windmill.
@@ -60,6 +64,14 @@ func New(s Settings, g *graph.Client, wm *windmill.Client, st *store.Store, log 
 // Login provisions and synchronises the identity and returns the Windmill e-mail to sign in.
 // Any error means the sign-in must be refused; a *DenyError carries a user-facing reason.
 func (e *Engine) Login(ctx context.Context, id oidc.Identity) (string, error) {
+	if e.s.OpenAccess {
+		user, err := e.graph.Me(ctx, id.AccessToken, id.ObjectID)
+		if err != nil {
+			e.log.Warn("graph profile lookup failed", "oid", id.ObjectID, "err", err)
+			return "", deny(ReasonGraphUnavailable)
+		}
+		return e.syncIdentity(ctx, id, user, nil, true)
+	}
 	user, groups, err := e.graph.Lookup(ctx, id.ObjectID)
 	if err != nil && !errors.Is(err, graph.ErrNotFound) {
 		e.log.Warn("graph lookup failed", "oid", id.ObjectID, "err", err)
@@ -95,7 +107,7 @@ func (e *Engine) syncIdentity(ctx context.Context, id oidc.Identity, user *graph
 			if !signIn {
 				return errors.New("identity vanished during reconcile")
 			}
-			if len(desired) == 0 {
+			if len(desired) == 0 && !e.s.OpenAccess {
 				return deny(ReasonNoAccess)
 			}
 			if ident, err = e.link(ctx, id, user); err != nil {
@@ -104,13 +116,15 @@ func (e *Engine) syncIdentity(ctx context.Context, id oidc.Identity, user *graph
 		} else if err := e.checkLinked(ctx, ident, user); err != nil {
 			return err
 		}
-		if err := e.apply(ctx, ident, desired); err != nil {
-			return err
+		if !e.s.OpenAccess {
+			if err := e.apply(ctx, ident, desired); err != nil {
+				return err
+			}
 		}
 		if err := e.store.TouchIdentity(ctx, id.TenantID, id.ObjectID, user.UPN); err != nil {
 			return err
 		}
-		if len(desired) == 0 {
+		if len(desired) == 0 && !e.s.OpenAccess {
 			return deny(ReasonNoAccess)
 		}
 		email = ident.Email

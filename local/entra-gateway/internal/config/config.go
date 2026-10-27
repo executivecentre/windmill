@@ -28,16 +28,21 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 // Config is the validated gateway configuration.
 type Config struct {
-	PublicBaseURL     *url.URL
-	TenantID          string
-	ClientID          string
-	ClientSecret      string
-	AuthorityURL      string
-	GraphURL          string
-	WindmillURL       string
-	SuperadminSecret  string
-	DatabaseURL       string
-	CookieKey         []byte
+	PublicBaseURL    *url.URL
+	TenantID         string
+	ClientID         string
+	ClientSecret     string
+	AuthorityURL     string
+	GraphURL         string
+	WindmillURL      string
+	SuperadminSecret string
+	DatabaseURL      string
+	CookieKey        []byte
+	// EntraFromWindmill: no ENTRA_* values were given, so the app registration is read from
+	// Windmill's OAuth settings (see SetEntra).
+	EntraFromWindmill bool
+	// Mappings is nil without GROUP_MAPPINGS_PATH: every user of the tenant may sign in and the
+	// gateway manages no workspace membership, as with Windmill's own SSO.
 	Mappings          Mappings
 	AllowedDomains    []string
 	AdoptExisting     bool
@@ -51,9 +56,28 @@ func (c *Config) Issuer() string {
 	return c.AuthorityURL + "/" + c.TenantID + "/v2.0"
 }
 
+// CallbackPath is where Entra returns the browser: the redirect URI Windmill documents for its
+// own Microsoft login, so the app registration made for Windmill works unchanged.
+const CallbackPath = "/user/login_callback/microsoft"
+
 // RedirectURL is the OIDC redirect URI registered on the Entra app.
 func (c *Config) RedirectURL() string {
-	return c.PublicBaseURL.String() + "/sso/callback"
+	return c.PublicBaseURL.String() + CallbackPath
+}
+
+// SetEntra validates and installs the app registration read from Windmill's OAuth settings.
+func (c *Config) SetEntra(tenantID, clientID, secret string) error {
+	tenantID, clientID = strings.ToLower(strings.TrimSpace(tenantID)), strings.ToLower(strings.TrimSpace(clientID))
+	switch {
+	case !uuidPattern.MatchString(tenantID):
+		return errors.New("tenant must be the tenant's GUID")
+	case !uuidPattern.MatchString(clientID):
+		return errors.New("client id must be the application (client) GUID")
+	case strings.TrimSpace(secret) == "":
+		return errors.New("client secret is empty")
+	}
+	c.TenantID, c.ClientID, c.ClientSecret = tenantID, clientID, strings.TrimSpace(secret)
+	return nil
 }
 
 // TokenURL is the tenant's OAuth 2.0 token endpoint, used for Graph client credentials.
@@ -61,11 +85,15 @@ func (c *Config) TokenURL() string {
 	return c.AuthorityURL + "/" + c.TenantID + "/oauth2/v2.0/token"
 }
 
-// DomainAllowed reports whether the address's domain is in ALLOWED_EMAIL_DOMAINS.
+// DomainAllowed reports whether the address's domain is in ALLOWED_EMAIL_DOMAINS; with none
+// listed, any well-formed address is (the tenant check already limits who can sign in).
 func (c *Config) DomainAllowed(email string) bool {
 	at := strings.LastIndexByte(email, '@')
 	if at <= 0 || at == len(email)-1 {
 		return false
+	}
+	if len(c.AllowedDomains) == 0 {
+		return true
 	}
 	domain := strings.ToLower(email[at+1:])
 	for _, d := range c.AllowedDomains {
@@ -163,15 +191,19 @@ func Load(env Env) (*Config, error) {
 		}
 	}
 
-	cfg.TenantID = strings.ToLower(l.required("ENTRA_TENANT_ID"))
-	if cfg.TenantID != "" && !uuidPattern.MatchString(cfg.TenantID) {
-		l.fail("ENTRA_TENANT_ID must be the tenant's GUID")
+	cfg.EntraFromWindmill = l.plain("ENTRA_TENANT_ID", "") == "" && l.plain("ENTRA_CLIENT_ID", "") == "" &&
+		l.env.Getenv("ENTRA_CLIENT_SECRET") == "" && l.plain("ENTRA_CLIENT_SECRET_FILE", "") == ""
+	if !cfg.EntraFromWindmill {
+		cfg.TenantID = strings.ToLower(l.required("ENTRA_TENANT_ID"))
+		if cfg.TenantID != "" && !uuidPattern.MatchString(cfg.TenantID) {
+			l.fail("ENTRA_TENANT_ID must be the tenant's GUID")
+		}
+		cfg.ClientID = strings.ToLower(l.required("ENTRA_CLIENT_ID"))
+		if cfg.ClientID != "" && !uuidPattern.MatchString(cfg.ClientID) {
+			l.fail("ENTRA_CLIENT_ID must be the application (client) GUID")
+		}
+		cfg.ClientSecret = l.secret("ENTRA_CLIENT_SECRET")
 	}
-	cfg.ClientID = strings.ToLower(l.required("ENTRA_CLIENT_ID"))
-	if cfg.ClientID != "" && !uuidPattern.MatchString(cfg.ClientID) {
-		l.fail("ENTRA_CLIENT_ID must be the application (client) GUID")
-	}
-	cfg.ClientSecret = l.secret("ENTRA_CLIENT_SECRET")
 	cfg.AuthorityURL = l.httpsURL("ENTRA_AUTHORITY_URL", l.plain("ENTRA_AUTHORITY_URL", DefaultAuthorityURL))
 	cfg.GraphURL = l.httpsURL("GRAPH_BASE_URL", l.plain("GRAPH_BASE_URL", DefaultGraphURL))
 
@@ -198,7 +230,7 @@ func Load(env Env) (*Config, error) {
 		}
 	}
 
-	if path := l.required("GROUP_MAPPINGS_PATH"); path != "" {
+	if path := l.plain("GROUP_MAPPINGS_PATH", ""); path != "" {
 		b, err := env.ReadFile(path)
 		if err != nil {
 			l.fail("GROUP_MAPPINGS_PATH: cannot read %s", path)
@@ -209,7 +241,7 @@ func Load(env Env) (*Config, error) {
 		}
 	}
 
-	for _, d := range strings.Split(l.required("ALLOWED_EMAIL_DOMAINS"), ",") {
+	for _, d := range strings.Split(l.plain("ALLOWED_EMAIL_DOMAINS", ""), ",") {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if d == "" {
 			continue

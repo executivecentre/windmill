@@ -1,5 +1,6 @@
 // Package graph reads a user and their transitive group memberships from Microsoft Graph
-// with app-only (client-credentials) access; the app needs only `User.Read.All`.
+// with app-only (client-credentials) access (the app needs only `User.Read.All`), and a user's
+// own entry with their delegated token (`User.Read`).
 package graph
 
 import (
@@ -48,7 +49,8 @@ func (u *User) Email() string {
 // Client calls Graph.
 type Client struct {
 	base  *url.URL
-	http  *http.Client
+	http  *http.Client // carries the app's client-credentials token
+	plain *http.Client // for requests that bring their own (delegated) token
 	sleep func(context.Context, time.Duration) error
 }
 
@@ -82,7 +84,28 @@ func New(s Settings) (*Client, error) {
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, transport)
 	authed := oauth2.NewClient(ctx, cc.TokenSource(ctx))
 	authed.Timeout = LookupBudget
-	return &Client{base: base, http: authed, sleep: sleepCtx}, nil
+	plain := *transport
+	plain.Timeout = LookupBudget
+	return &Client{base: base, http: authed, plain: &plain, sleep: sleepCtx}, nil
+}
+
+// Me reads the signed-in user's own directory entry with their delegated token (User.Read),
+// which needs no admin-consented application permission. oid must match the entry.
+func (c *Client) Me(ctx context.Context, accessToken, oid string) (*User, error) {
+	ctx, cancel := context.WithTimeout(ctx, LookupBudget)
+	defer cancel()
+	u := c.base.JoinPath("v1.0", "me")
+	u.RawQuery = "$select=id,userPrincipalName,mail,displayName"
+	var user User
+	if err := c.fetch(ctx, c.plain, accessToken, u.String(), &user); err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(user.ID, oid) {
+		return nil, errors.New("graph: user id mismatch")
+	}
+	// Entra issues no tokens to a disabled account, so a user who just signed in is enabled.
+	user.AccountEnabled = true
+	return &user, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -165,6 +188,11 @@ func (c *Client) sameOrigin(raw string) bool {
 // getJSON performs a GET with retries on 429 and 5xx, honouring Retry-After within the
 // caller's deadline.
 func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
+	return c.fetch(ctx, c.http, "", rawURL, out)
+}
+
+// fetch is getJSON over hc, adding bearer as the Authorization token when set.
+func (c *Client) fetch(ctx context.Context, hc *http.Client, bearer, rawURL string, out any) error {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -173,7 +201,10 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
 		}
 		req.Header.Set("ConsistencyLevel", "eventual")
 		req.Header.Set("Accept", "application/json")
-		resp, err := c.http.Do(req)
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		resp, err := hc.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("graph: %w", redact(err))
 			if ctx.Err() != nil || attempt == maxAttempts {

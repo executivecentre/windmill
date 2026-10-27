@@ -1,5 +1,6 @@
-// Command entra-gateway signs users in to Windmill with Microsoft Entra ID and keeps their
-// Windmill accounts, workspace memberships and groups in line with Entra group membership.
+// Command entra-gateway signs users in to Windmill with Microsoft Entra ID. With a group
+// mapping file it also keeps their Windmill accounts, workspace memberships and groups in line
+// with Entra group membership; without one it works like Windmill's own Microsoft SSO.
 package main
 
 import (
@@ -23,7 +24,11 @@ import (
 	"entra-gateway/migrations"
 )
 
-const shutdownTimeout = 20 * time.Second
+const (
+	shutdownTimeout = 20 * time.Second
+	appRetry        = 30 * time.Second // while Windmill's app registration is missing or rejected
+	appWatch        = time.Minute      // for changes to it once loaded
+)
 
 func main() {
 	// The runtime image has no shell or curl, so the container healthcheck runs the binary itself.
@@ -54,12 +59,29 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	wm := windmill.New(cfg.WindmillURL, cfg.SuperadminSecret, nil)
+	var appFP string
+	if cfg.EntraFromWindmill {
+		appFP, err = waitForApp(ctx, log, wm, cfg, checkClientSecret(&http.Client{Timeout: 10 * time.Second}), appRetry)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+	}
+	openAccess := cfg.Mappings == nil
+	var scopes []string
+	if openAccess {
+		scopes = []string{"User.Read"}
+	}
 	auth := oidc.New(oidc.Settings{
 		Issuer:       cfg.Issuer(),
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
 		RedirectURL:  cfg.RedirectURL(),
+		ExtraScopes:  scopes,
 	})
 	go auth.RunDiscovery(ctx, func(err error) { log.Warn("oidc discovery failed; retrying", "err", err) })
 
@@ -72,13 +94,19 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	wm := windmill.New(cfg.WindmillURL, cfg.SuperadminSecret, nil)
 	engine := sync.New(sync.Settings{
 		Mappings:      cfg.Mappings,
 		DomainAllowed: cfg.DomainAllowed,
 		AdoptExisting: cfg.AdoptExisting,
+		OpenAccess:    openAccess,
 	}, g, wm, st, log)
-	go engine.RunReconciler(ctx, cfg.ReconcileInterval)
+	// Open access manages no memberships and reads no directory with app permissions.
+	if !openAccess {
+		go engine.RunReconciler(ctx, cfg.ReconcileInterval)
+	}
+	if cfg.EntraFromWindmill {
+		go watchApp(ctx, log, wm, appFP, appWatch, stop)
+	}
 
 	srv, err := httpserver.New(httpserver.Settings{
 		PublicBaseURL: cfg.PublicBaseURL,
@@ -101,7 +129,8 @@ func run(log *slog.Logger) error {
 	errc := make(chan error, 1)
 	go func() { errc <- httpSrv.ListenAndServe() }()
 	log.Info("entra-gateway listening", "addr", cfg.ListenAddr, "public_base_url", cfg.PublicBaseURL.String(),
-		"mappings", len(cfg.Mappings), "reconcile_interval", cfg.ReconcileInterval.String())
+		"mappings", len(cfg.Mappings), "open_access", openAccess, "entra_from_windmill", cfg.EntraFromWindmill,
+		"reconcile_interval", cfg.ReconcileInterval.String())
 
 	select {
 	case err := <-errc:

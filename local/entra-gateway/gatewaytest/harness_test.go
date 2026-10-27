@@ -62,9 +62,12 @@ type harness struct {
 	offset  time.Duration
 }
 
-type harnessOpts struct{ adopt bool }
+type harnessOpts struct{ adopt, open bool }
 
 func withAdoption(o *harnessOpts) { o.adopt = true }
+
+// withOpenAccess runs without group mappings or allowed domains, like Windmill's own SSO.
+func withOpenAccess(o *harnessOpts) { o.open = true }
 
 func testDB(t *testing.T) string {
 	dsn := os.Getenv("GATEWAY_TEST_DATABASE_URL")
@@ -120,9 +123,14 @@ func newHarness(t *testing.T, opts ...func(*harnessOpts)) *harness {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{AllowedDomains: []string{"corp.example"}}
+	var scopes []string
+	if o.open {
+		mappings, cfg, scopes = nil, &config.Config{}, []string{"User.Read"}
+	}
 	client := h.idp.srv.Client() // trusts every httptest TLS server
 	h.auth = oidc.New(oidc.Settings{Issuer: h.idp.issuer(), TenantID: h.idp.tenant, ClientID: h.idp.clientID,
-		ClientSecret: h.idp.clientSecret, RedirectURL: publicBase + "/sso/callback", HTTPClient: client, Now: h.now})
+		ClientSecret: h.idp.clientSecret, RedirectURL: publicBase + config.CallbackPath, ExtraScopes: scopes,
+		HTTPClient: client, Now: h.now})
 	if err := h.auth.Discover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +140,8 @@ func newHarness(t *testing.T, opts ...func(*harnessOpts)) *harness {
 		t.Fatal(err)
 	}
 	wm := windmill.New(h.wm.srv.URL, h.wm.secret, nil)
-	h.engine = sync.New(sync.Settings{Mappings: mappings, DomainAllowed: cfg.DomainAllowed, AdoptExisting: o.adopt},
+	h.engine = sync.New(sync.Settings{Mappings: mappings, DomainAllowed: cfg.DomainAllowed, AdoptExisting: o.adopt,
+		OpenAccess: o.open},
 		g, wm, st, log)
 	pub, _ := url.Parse(publicBase)
 	srv, err := httpserver.New(httpserver.Settings{PublicBaseURL: pub, CookieKey: []byte(strings.Repeat("k", 32)),

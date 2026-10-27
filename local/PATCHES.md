@@ -220,8 +220,8 @@ Measured on the host toolchain (cargo/rustfmt 1.99 / rustfmt 1.10.0, newer than 
 
 - **Change**: insertions only, plus one changed line. A `const ENTRA_GATEWAY_SSO = true` after
   the imports, and a new first branch `{#if tab === 'sso' && ENTRA_GATEWAY_SSO}` that shows a
-  header and one `Alert` stating that SSO is provided by the Microsoft Entra ID gateway at
-  `/sso/login`. Upstream's `{#if tab === 'sso'}` becomes `{:else if tab === 'sso'}`, so its
+  header and one `Alert` stating that SSO is provided by the Microsoft Entra ID gateway, which
+  uses the OAuth tab's Microsoft entry and the redirect URI `<base URL>/user/login_callback/microsoft`. Upstream's `{#if tab === 'sso'}` becomes `{:else if tab === 'sso'}`, so its
   content (the "Limited to 10 SSO users" alert, the require-preexisting-user toggle, the built-in
   and custom SSO provider forms) is kept verbatim but never renders. Keeping it also keeps every
   upstream import and helper in use, so `noUnusedLocals` stays quiet.

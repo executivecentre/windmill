@@ -165,6 +165,44 @@ func (c *Client) GlobalUser(ctx context.Context, email string) (*GlobalUser, err
 	}
 }
 
+// MicrosoftApp is a Microsoft Entra app registration saved in Windmill's OAuth settings.
+type MicrosoftApp struct {
+	Key      string `json:"-"` // the `oauths` entry it was read from
+	TenantID string `json:"tenant"`
+	ClientID string `json:"id"`
+	Secret   string `json:"secret"`
+}
+
+// microsoftOAuthKeys are tried in order: Windmill's Microsoft login entry, then the Teams app
+// (`teams` is its pre-rename key).
+var microsoftOAuthKeys = []string{"microsoft", "ms_teams", "teams"}
+
+// MicrosoftApp returns the first Microsoft app registration in Windmill's OAuth settings, or nil.
+// The response holds client secrets, so it never reaches an error message.
+func (c *Client) MicrosoftApp(ctx context.Context) (*MicrosoftApp, error) {
+	var oauths map[string]json.RawMessage
+	if err := c.do(ctx, "read oauth settings", http.MethodGet, "/api/settings/global/oauths", nil, &oauths, true); err != nil {
+		var se *StatusError
+		if errors.As(err, &se) {
+			return nil, err
+		}
+		return nil, errors.New("windmill read oauth settings: unreadable response")
+	}
+	for _, key := range microsoftOAuthKeys {
+		raw, ok := oauths[key]
+		if !ok || string(raw) == "null" {
+			continue
+		}
+		var app MicrosoftApp
+		if json.Unmarshal(raw, &app) != nil {
+			return nil, fmt.Errorf("windmill oauth setting %s: unreadable", key)
+		}
+		app.Key = key
+		return &app, nil
+	}
+	return nil, nil
+}
+
 // CreateUser creates an `entra` account (no password, never superadmin).
 func (c *Client) CreateUser(ctx context.Context, email, name string) error {
 	in := map[string]any{"email": email, "super_admin": false, "login_type": LoginType}

@@ -369,8 +369,11 @@
 				description="Users sign in through the Microsoft Entra ID gateway."
 			/>
 			<Alert type="info" title="SSO is provided by the Microsoft Entra ID gateway">
-				Users sign in at /sso/login. Access, workspaces and roles come from the gateway's Entra
-				group mappings, not from these settings.
+				Users sign in with Continue with Microsoft on the login page. The gateway uses the
+				Microsoft entry of the OAuth tab (tenant, client ID and the secret's value), whose
+				redirect URIs must include {baseUrl?.replace(/\/$/, '') || 'the base URL'}/user/login_callback/microsoft. Any
+				user of the tenant may sign in and gets an account without workspaces, unless the gateway
+				runs with group mappings.
 			</Alert>
 		{:else if tab === 'sso'}
 			<SettingsPageHeader

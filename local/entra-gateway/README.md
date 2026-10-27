@@ -1,31 +1,50 @@
 # entra-gateway
 
-Signs users in to Windmill with Microsoft Entra ID, and keeps their Windmill accounts,
-workspace memberships and groups in line with their Entra group membership.
+Signs users in to Windmill with Microsoft Entra ID, the sign-in that Windmill's open-source
+build leaves out. It runs in one of two modes:
+
+- **Windmill-configured** (the default, and how the deployment runs it): no `ENTRA_*` values and
+  no group mapping file. Like Windmill's own Microsoft login, the app registration (tenant,
+  client ID, secret) is the Microsoft entry saved in Windmill's instance OAuth settings, the
+  redirect URI is `${PUBLIC_BASE_URL}/user/login_callback/microsoft`, and any user of the tenant
+  may sign in. They get an account with no workspace; a workspace admin adds them.
+- **Group mapping:** `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, the client secret and
+  `GROUP_MAPPINGS_PATH` are set. Only members of mapped Entra groups may sign in, and their
+  workspace memberships, roles and groups follow Entra group membership.
 
 It is a **login broker**, not an authenticating proxy. Windmill keeps authenticating every API
 call with its own session cookie. The gateway's only job is to decide whether a person may
 have a session, and then hand them one through a single-use Windmill login link. Caddy routes
-`/sso/*` to the gateway and sends `/user/login` there too. Every other path goes to Windmill
-unchanged.
+`/sso/*` and `/user/login_callback/microsoft` to the gateway. Every other path goes to Windmill
+unchanged; Windmill's login page shows **Continue with Microsoft** while `/sso/status` answers.
 
 ```
-browser ──/user/login──▶ Caddy ──302──▶ /sso/login ──▶ Entra (auth code + PKCE)
+browser ── Continue with Microsoft ──▶ /sso/login ──▶ Entra (auth code + PKCE)
                                                          │
-browser ◀──302 to rd── /sso/callback ◀──────────────────┘
+browser ◀──302 to rd── /user/login_callback/microsoft ◀──┘
           (Windmill session)  │ 1. verify ID token (iss, aud, tid, nonce, signature)
-                              │ 2. Graph: user + transitive groups (app-only)
-                              │ 3. create/link the Windmill account, sync memberships
+                              │ 2. Graph: the user's profile (/me, with their token), or in
+                              │    group mapping mode the user + transitive groups (app-only)
+                              │ 3. create/link the Windmill account (and sync memberships)
                               │ 4. mint a single-use Windmill login link, follow it
 ```
+
+**Windmill-configured mode.** At start the gateway reads Windmill's `oauths` instance setting
+(the `microsoft` entry, else `ms_teams` or `teams`) and asks Entra for a client-credentials token
+to check the secret. Until both work it does not serve sign-in: it logs the reason every 30 s
+(for example that the secret's ID was saved instead of its value), and the login page shows no
+Microsoft button. It rereads the setting every minute and restarts when the entry changes, so a
+new secret saved in Windmill takes effect within about a minute, with nothing to set here.
 
 ## Behaviour
 
 - **Identity:** keyed by Entra `tid` + `oid`, never by email. The Windmill account's email is
   taken from the Graph `mail` attribute, or `userPrincipalName` when `mail` is empty. If that
   address changes in Entra, the account stays linked to its first address.
-- **Access:** a user needs at least one mapped group (see `group-mappings.example.yaml`), an
-  enabled Entra account and an email domain in `ALLOWED_EMAIL_DOMAINS`. Anyone else is denied
+- **Access:** a user needs an account in the tenant (the ID token's `tid`) and, when
+  `ALLOWED_EMAIL_DOMAINS` is set, an email in one of those domains. In group mapping mode they
+  also need at least one mapped group (see `group-mappings.example.yaml`) and an enabled Entra
+  account. Anyone else is denied
   with a reason page and no Windmill session. If Graph is unreachable, sign-in is denied; there
   is no cached decision to fall back on.
 - **Roles:** only `admin`, `developer` and `operator` within a workspace. Entra users are never
@@ -36,7 +55,7 @@ browser ◀──302 to rd── /sso/callback ◀──────────
   login type to `entra`, which ends its password sign-in. Accounts disabled by an
   administrator are never adopted, and an email already linked to a different Entra object is
   never handed over.
-- **Deprovisioning:** when a user loses a mapping, the gateway disables that workspace
+- **Deprovisioning (group mapping mode only):** when a user loses a mapping, the gateway disables that workspace
   membership; when the user is disabled or deleted in Entra, it disables every membership it
   manages and the whole account. Both happen at the user's next sign-in attempt or the next
   reconcile run (`RECONCILE_INTERVAL`, default 15m). It re-enables only what it disabled
@@ -64,10 +83,17 @@ docker compose … exec db psql -U postgres -d entra_gateway \
 
 ## Entra app registration
 
+In Windmill-configured mode the registration is the one saved in Windmill's instance OAuth
+settings (`microsoft`, or `ms_teams`), so only two things matter here: its redirect URIs must
+include `${PUBLIC_BASE_URL}/user/login_callback/microsoft`, and the setting must hold the client
+secret's **Value**, not its Secret ID (Entra answers `AADSTS7000215` to the ID). New
+registrations already have the delegated `User.Read` permission the gateway uses. The steps below
+are for group mapping mode.
+
 1. **Entra admin center → App registrations → New registration.** Supported account types:
    *Accounts in this organizational directory only* (single tenant).
 2. **Authentication → Add a platform → Web.** Add both redirect URIs:
-   - `${PUBLIC_BASE_URL}/sso/callback`
+   - `${PUBLIC_BASE_URL}/user/login_callback/microsoft`
    - `${PUBLIC_BASE_URL}/sso/logged-out` (Entra only redirects there after sign-out if it is
      registered)
 
@@ -96,17 +122,17 @@ every problem.
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | yes | Public `https://` origin of Windmill, no path or trailing slash |
-| `ENTRA_TENANT_ID` | yes | Directory (tenant) ID, a GUID |
-| `ENTRA_CLIENT_ID` | yes | Application (client) ID |
-| `ENTRA_CLIENT_SECRET_FILE` | yes¹ | File holding the client secret |
+| `ENTRA_TENANT_ID` | ² | Directory (tenant) ID, a GUID |
+| `ENTRA_CLIENT_ID` | ² | Application (client) ID |
+| `ENTRA_CLIENT_SECRET_FILE` | ²¹ | File holding the client secret |
 | `WINDMILL_INTERNAL_URL` | yes | Windmill server on the internal network, e.g. `http://windmill_server:8000` |
 | `WINDMILL_SUPERADMIN_SECRET_FILE` | yes¹ | File holding Windmill's `SUPERADMIN_SECRET` |
 | `GATEWAY_DATABASE_URL_FILE` | yes¹ | File holding the URL of the gateway's own database |
 | `COOKIE_KEY_FILE` | yes¹ | File holding 32 random bytes, hex-encoded (64 characters) |
-| `GROUP_MAPPINGS_PATH` | yes | Group mapping YAML |
-| `ALLOWED_EMAIL_DOMAINS` | yes | Comma-separated domains; subdomains match too |
+| `GROUP_MAPPINGS_PATH` | no | Group mapping YAML; turns on group mapping mode |
+| `ALLOWED_EMAIL_DOMAINS` | no | Comma-separated domains, subdomains match too (default: any) |
 | `ADOPT_EXISTING_ACCOUNTS` | no | `true` to link pre-existing Windmill accounts (default `false`) |
-| `RECONCILE_INTERVAL` | no | Go duration, at least `1m` (default `15m`) |
+| `RECONCILE_INTERVAL` | no | Group mapping mode: Go duration, at least `1m` (default `15m`) |
 | `LOGIN_LINK_TTL_SECONDS` | no | Lifetime of the login link, at most 900 (default 60) |
 | `ENTRA_AUTHORITY_URL` | no | For national clouds (default `https://login.microsoftonline.com`) |
 | `GRAPH_BASE_URL` | no | For national clouds (default `https://graph.microsoft.com`) |
@@ -114,6 +140,8 @@ every problem.
 
 ¹ Each `*_FILE` variable can be replaced by the variable without `_FILE` holding the value
 directly. Setting both is an error. Prefer the files: compose mounts them as secrets.
+
+² Set all three, or none: with none, the app registration comes from Windmill's OAuth settings.
 
 The gateway logs JSON to stdout. It never logs client secrets, authorization codes, ID or
 access tokens, Windmill tokens, the superadmin secret or login-link URLs.
