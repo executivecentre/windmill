@@ -39,10 +39,15 @@ use crate::db::DB;
 #[cfg(not(feature = "private"))]
 use std::str;
 
+// Local patch (local/PATCHES.md): SSO sign-in lives in oauth2_oss_local.rs.
+#[cfg(all(feature = "oauth2", not(feature = "private")))]
+#[path = "oauth2_oss_local.rs"]
+mod local;
+
 #[cfg(not(feature = "private"))]
 pub fn global_service() -> Router {
     Router::new()
-        .route("/list_logins", get(list_logins))
+        .merge(local::routes())
         .route("/list_connects", get(list_connects))
 }
 
@@ -79,7 +84,7 @@ pub async fn build_oauth_clients(
 ) -> anyhow::Result<AllClients> {
     // Implementation is not open source
     return Ok(AllClients {
-        logins: HashMap::default(),
+        logins: local::build_login_clients(_base_url, _oauths_from_config.as_ref()),
         connects: HashMap::default(),
         slack: None,
         slack_signing_secret: None,
@@ -101,6 +106,7 @@ pub struct TokenResponse {
 }
 
 #[cfg(not(feature = "private"))]
+#[allow(dead_code)] // Local patch (local/PATCHES.md): replaced by oauth2_oss_local.rs.
 #[derive(Serialize)]
 struct Logins {
     oauth: Vec<String>,
@@ -108,6 +114,7 @@ struct Logins {
     auto_login: Option<String>,
 }
 #[cfg(not(feature = "private"))]
+#[allow(dead_code)] // Local patch (local/PATCHES.md): replaced by oauth2_oss_local.rs.
 async fn list_logins() -> error::JsonResult<Logins> {
     // Implementation is not open source
     return Ok(Json(Logins { oauth: vec![], saml: None, auto_login: None }));

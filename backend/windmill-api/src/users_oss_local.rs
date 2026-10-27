@@ -1,6 +1,6 @@
 //! Local patch (local/PATCHES.md): OSS implementations of create_user, set_password and
 //! hash_password, reached through one-line delegations in the stubs of `users_oss.rs`, which
-//! declares this module. Callers in `users.rs` own job-token checks, session deletion and MCP
+//! declares this module, and `insert_account`, shared with SSO sign-in. Callers in `users.rs` own job-token checks, session deletion and MCP
 //! grant revocation; these functions own authorization, validation and the `password` row.
 
 use std::sync::Arc;
@@ -21,12 +21,11 @@ use crate::db::{ApiAuthed, DB};
 use crate::users::{EditPassword, NewUser};
 use crate::webhook_util::WebhookShared;
 
-const MIN_PASSWORD_LEN: usize = 12;
-
 const PASSWORD_LOGIN_TYPE: &str = "password";
 
-/// `entra` accounts are owned by the Entra ID gateway; this build has no other identity provider.
-const CREATABLE_LOGIN_TYPES: [&str; 3] = [PASSWORD_LOGIN_TYPE, PENDING_OAUTH_LOGIN_TYPE, "entra"];
+/// Accounts of an SSO provider are created by their first sign-in (`oauth2_oss_local.rs`); an
+/// administrator adds them ahead of time as `pending_oauth`.
+const CREATABLE_LOGIN_TYPES: [&str; 2] = [PASSWORD_LOGIN_TYPE, PENDING_OAUTH_LOGIN_TYPE];
 
 fn validate_login_type(login_type: &str) -> Result<()> {
     if CREATABLE_LOGIN_TYPES.contains(&login_type) {
@@ -94,57 +93,16 @@ pub(super) async fn create_user(
         return Err(account_exists(&email));
     }
 
-    let automate_username_creation = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT value FROM global_settings WHERE name = $1",
+    insert_account(
+        &mut tx,
+        &email,
+        password_hash.as_deref(),
+        &login_type,
+        nu.super_admin,
+        nu.name.as_deref(),
+        nu.company.as_deref(),
     )
-    .bind(AUTOMATE_USERNAME_CREATION_SETTING)
-    .fetch_optional(&mut *tx)
-    .await?
-    .and_then(|v| v.as_bool())
-    .unwrap_or(true);
-
-    let username = if automate_username_creation {
-        let pending =
-            sqlx::query_scalar::<_, String>("SELECT username FROM pending_user WHERE email = $1")
-                .bind(&email)
-                .fetch_optional(&mut *tx)
-                .await?;
-        match pending {
-            Some(username) => Some(username),
-            None => Some(generate_instance_wide_unique_username(&mut tx, &email).await?),
-        }
-    } else {
-        None
-    };
-
-    // `email` is the primary key: a concurrent create of the same address that passed the
-    // existence check above fails here and must still read as a conflict.
-    sqlx::query(
-        "INSERT INTO password
-            (email, password_hash, login_type, super_admin, verified, name, company, username)
-         VALUES ($1, $2, $3, $4, true, $5, $6, $7)",
-    )
-    .bind(&email)
-    .bind(&password_hash)
-    .bind(&login_type)
-    .bind(nu.super_admin)
-    .bind(&nu.name)
-    .bind(&nu.company)
-    .bind(&username)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        if is_unique_violation(&e) {
-            account_exists(&email)
-        } else {
-            e.into()
-        }
-    })?;
-
-    sqlx::query("DELETE FROM pending_user WHERE email = $1")
-        .bind(&email)
-        .execute(&mut *tx)
-        .await?;
+    .await?;
 
     audit_log(
         &mut *tx,
@@ -162,6 +120,72 @@ pub(super) async fn create_user(
     webhook.send_instance_event(InstanceEvent::UserAdded { email: email.clone() });
 
     Ok((StatusCode::CREATED, format!("email {email} created")))
+}
+
+/// Inserts the `password` row of a new instance account, with a generated username unless
+/// the instance turned that off. Also used by SSO sign-in to create first-time users.
+pub(crate) async fn insert_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    email: &str,
+    password_hash: Option<&str>,
+    login_type: &str,
+    super_admin: bool,
+    name: Option<&str>,
+    company: Option<&str>,
+) -> Result<()> {
+    let automate_username_creation = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT value FROM global_settings WHERE name = $1",
+    )
+    .bind(AUTOMATE_USERNAME_CREATION_SETTING)
+    .fetch_optional(&mut **tx)
+    .await?
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+
+    let username = if automate_username_creation {
+        let pending =
+            sqlx::query_scalar::<_, String>("SELECT username FROM pending_user WHERE email = $1")
+                .bind(email)
+                .fetch_optional(&mut **tx)
+                .await?;
+        match pending {
+            Some(username) => Some(username),
+            None => Some(generate_instance_wide_unique_username(tx, email).await?),
+        }
+    } else {
+        None
+    };
+
+    // `email` is the primary key: a concurrent create of the same address that passed the
+    // existence check above fails here and must still read as a conflict.
+    sqlx::query(
+        "INSERT INTO password
+            (email, password_hash, login_type, super_admin, verified, name, company, username)
+         VALUES ($1, $2, $3, $4, true, $5, $6, $7)",
+    )
+    .bind(email)
+    .bind(password_hash)
+    .bind(login_type)
+    .bind(super_admin)
+    .bind(name)
+    .bind(company)
+    .bind(&username)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| {
+        if is_unique_violation(&e) {
+            account_exists(email)
+        } else {
+            e.into()
+        }
+    })?;
+
+    sqlx::query("DELETE FROM pending_user WHERE email = $1")
+        .bind(email)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok(())
 }
 
 pub(super) async fn set_password(
@@ -222,10 +246,8 @@ pub(super) async fn set_password(
 }
 
 pub(super) fn hash_password(argon2: Arc<Argon2<'_>>, password: String) -> Result<String> {
-    if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(Error::BadRequest(format!(
-            "password must be at least {MIN_PASSWORD_LEN} characters long"
-        )));
+    if password.is_empty() {
+        return Err(Error::BadRequest("password must not be empty".to_string()));
     }
     argon2
         .hash_password(password.as_bytes())

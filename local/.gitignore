@@ -1,6 +1,5 @@
-# Generated output; never commit it.
+# Local files of earlier deployments (secrets, backups, source archives); never commit them.
 /dist/
-# Operator files from before the deployment moved to its own repository; never commit them.
 /.env
 /secrets/
 /backups/

@@ -32,7 +32,7 @@ use windmill_common::error::{Error, Result};
 // Local patch (local/PATCHES.md): the three stubs below delegate to users_oss_local.rs.
 #[cfg(not(feature = "private"))]
 #[path = "users_oss_local.rs"]
-mod local;
+pub(crate) mod local;
 
 #[cfg(not(feature = "private"))]
 pub async fn create_user(

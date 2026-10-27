@@ -23,8 +23,6 @@
 	import { refreshSuperadmin } from '$lib/refreshUser'
 	import { isValidLogoutRedirect, toSameOriginRelativePath } from '$lib/logoutRedirect'
 	import { confirmPendingLoginMethod } from '$lib/lastLoginMethod'
-	import { Button } from '$lib/components/common'
-	import MicrosoftIcon from '$lib/components/icons/MicrosoftIcon.svelte'
 
 	const email = page.url.searchParams.get('email') ?? ''
 	const password = page.url.searchParams.get('password') ?? ''
@@ -64,13 +62,6 @@
 
 	onMount(() => {
 		clearWindmillCloudCookies()
-	})
-
-	// Local patch (local/PATCHES.md): Microsoft sign-in goes through the Entra gateway. The button
-	// shows only while the gateway answers, so an unconfigured gateway never leads to an error page.
-	let entraGateway = $state(false)
-	onMount(async () => {
-		entraGateway = (await fetch('/sso/status').catch(() => undefined))?.ok ?? false
 	})
 
 	async function redirectUser() {
@@ -174,18 +165,6 @@
 	</div>
 
 	<div class="mt-6 sm:mx-auto sm:w-full sm:max-w-sm">
-		{#if entraGateway}
-			<div class="grid mb-4 px-4 sm:px-0">
-				<Button
-					variant="default"
-					unifiedSize="lg"
-					startIcon={{ icon: MicrosoftIcon, classes: 'h-4' }}
-					href={`/sso/login?rd=${encodeURIComponent(rd ?? '/')}`}
-				>
-					Continue with Microsoft
-				</Button>
-			</div>
-		{/if}
 		<Login
 			{firstTime}
 			{rd}

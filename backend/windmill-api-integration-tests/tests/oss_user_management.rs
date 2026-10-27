@@ -95,7 +95,7 @@ async fn password_user_is_created_and_can_log_in(db: Pool<Postgres>) -> anyhow::
     assert_eq!(resp.status(), 400);
 
     for body in [
-        json!({"email": "short@example.com", "password": "short", "super_admin": false}),
+        json!({"email": "empty@example.com", "password": "", "super_admin": false}),
         json!({"email": "nopassword@example.com", "super_admin": false}),
         json!({"email": "not-an-email", "password": PASSWORD, "super_admin": false}),
     ] {
@@ -116,7 +116,7 @@ async fn provider_user_has_no_password(db: Pool<Postgres>) -> anyhow::Result<()>
         port,
         "SECRET_TOKEN",
         json!({"email": "bob@example.com", "password": PASSWORD, "super_admin": false,
-               "login_type": "entra"}),
+               "login_type": "pending_oauth"}),
     )
     .await?;
     assert_eq!(
@@ -128,7 +128,7 @@ async fn provider_user_has_no_password(db: Pool<Postgres>) -> anyhow::Result<()>
     let resp = create(
         port,
         "SECRET_TOKEN",
-        json!({"email": "bob@example.com", "super_admin": false, "login_type": "entra"}),
+        json!({"email": "bob@example.com", "super_admin": false, "login_type": "pending_oauth"}),
     )
     .await?;
     assert_eq!(resp.status(), 201, "{}", resp.text().await?);
@@ -141,7 +141,10 @@ async fn provider_user_has_no_password(db: Pool<Postgres>) -> anyhow::Result<()>
     let resp = login(port, "bob@example.com", PASSWORD).await?;
     assert_eq!(resp.status(), 400);
 
-    // Not even a superadmin can give a provider account a password.
+    // Not even a superadmin can give an SSO account a password.
+    sqlx::query("UPDATE password SET login_type = 'microsoft' WHERE email = 'bob@example.com'")
+        .execute(&db)
+        .await?;
     let resp = client()
         .post(format!(
             "http://localhost:{port}/api/users/set_password_of/bob@example.com"
@@ -155,10 +158,10 @@ async fn provider_user_has_no_password(db: Pool<Postgres>) -> anyhow::Result<()>
         sqlx::query_scalar("SELECT login_type FROM password WHERE email = 'bob@example.com'")
             .fetch_one(&db)
             .await?;
-    assert_eq!(login_type, "entra");
+    assert_eq!(login_type, "microsoft");
 
-    // Only password, pending_oauth and entra accounts can be created.
-    for login_type in ["github", "saml", "Entra", ""] {
+    // Only password and pending_oauth accounts can be created; SSO creates the others.
+    for login_type in ["github", "saml", "microsoft", "entra", ""] {
         let resp = create(
             port,
             "SECRET_TOKEN",
@@ -177,7 +180,8 @@ async fn duplicate_and_unauthorized_creates_are_refused(db: Pool<Postgres>) -> a
     initialize_tracing().await;
     let server = ApiServer::start(db.clone()).await?;
     let port = server.addr.port();
-    let body = json!({"email": "dave@example.com", "super_admin": false, "login_type": "entra"});
+    let body =
+        json!({"email": "dave@example.com", "super_admin": false, "login_type": "pending_oauth"});
     let accounts_before = count_accounts(&db).await?;
 
     let resp = create(port, "SECRET_TOKEN_2", body.clone()).await?;
@@ -221,7 +225,8 @@ async fn concurrent_duplicate_creates_leave_one_row(db: Pool<Postgres>) -> anyho
         create(
             port,
             "SECRET_TOKEN",
-            json!({"email": "erin@example.com", "super_admin": false, "login_type": "entra"}),
+            json!({"email": "erin@example.com", "super_admin": false,
+                   "login_type": "pending_oauth"}),
         )
     });
     let statuses: Vec<u16> = futures::future::try_join_all(requests)
@@ -283,7 +288,7 @@ async fn password_change_invalidates_other_sessions(db: Pool<Postgres>) -> anyho
             .json(&json!({"password": password}))
             .send()
     };
-    assert_eq!(set_own("too-short").await?.status(), 400);
+    assert_eq!(set_own("").await?.status(), 400);
     let new_password = "another-long-password";
     let resp = set_own(new_password).await?;
     assert_eq!(resp.status(), 200, "{}", resp.text().await?);
@@ -394,14 +399,14 @@ async fn accounts_above_former_ce_caps(db: Pool<Postgres>) -> anyhow::Result<()>
             port,
             "SECRET_TOKEN",
             json!({"email": format!("sso{i}@example.com"), "super_admin": false,
-                   "login_type": "entra"}),
+                   "login_type": "pending_oauth"}),
         )
         .await?;
         assert_eq!(resp.status(), 201, "sso{i}: {}", resp.text().await?);
     }
 
     let provider_accounts: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM password WHERE login_type = 'entra'")
+        sqlx::query_scalar("SELECT count(*) FROM password WHERE login_type = 'pending_oauth'")
             .fetch_one(&db)
             .await?;
     assert_eq!(provider_accounts, 12);

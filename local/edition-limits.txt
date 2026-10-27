@@ -24,8 +24,6 @@ backend/windmill-common/src/instance_config.rs: return serde_json::json!(CE_MAX_
 backend/windmill-store/src/resources.rs: "You have reached the maximum number of resources (10000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
 backend/windmill-store/src/variables.rs: "You have reached the maximum number of variables (10000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
 backend/windmill-worker/src/dbt_profiles.rs: "{a:?} was accepted without an enterprise license"
-frontend/src/lib/components/AuthSettings.svelte: <Alert type="info" title="Limited to 10 SSO users">
-frontend/src/lib/components/AuthSettings.svelte: Without EE, the number of SSO users is limited to 10. SCIM/SAML is available on EE
 frontend/src/lib/components/AutoscalingConfigEditor.svelte: <span class="text-xs text-secondary">The maximum number of workers to scale up to</span>
 frontend/src/lib/components/HistoricInputs.svelte: <td class="w-full px-2" colspan="3">limited to 5 runs</td>
 frontend/src/lib/components/HttpAgentWorkerDrawer.svelte: you can only use the `agent_test` tag and it is limited to 100 jobs.

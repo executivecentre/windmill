@@ -30,9 +30,6 @@
 	import SettingsPageHeader from './settings/SettingsPageHeader.svelte'
 	import oauthConnectRegistry from '$oauth_connect_registry'
 
-	// Local patch (local/PATCHES.md): sign-in is the Entra ID gateway's; see the SSO tab below.
-	const ENTRA_GATEWAY_SSO = true
-
 	interface Props {
 		// Per-instance OAuth providers (Snowflake, ServiceNow, …): instance name
 		// keyed by provider, used to build their per-instance connect_config URLs.
@@ -361,32 +358,13 @@
 
 <div class="mb-6">
 	{#if oauths}
-		<!-- Local patch (local/PATCHES.md): this build has no built-in SSO providers, so the
-		     upstream SSO branch below is unreachable and kept only to keep rebases clean. -->
-		{#if tab === 'sso' && ENTRA_GATEWAY_SSO}
-			<SettingsPageHeader
-				title="Single Sign-On"
-				description="Users sign in through the Microsoft Entra ID gateway."
-			/>
-			<Alert type="info" title="SSO is provided by the Microsoft Entra ID gateway">
-				Users sign in with Continue with Microsoft on the login page. The gateway uses the
-				Microsoft entry of the OAuth tab (tenant, client ID and the secret's value), whose
-				redirect URIs must include {baseUrl?.replace(/\/$/, '') || 'the base URL'}/user/login_callback/microsoft. Any
-				user of the tenant may sign in and gets an account without workspaces, unless the gateway
-				runs with group mappings.
-			</Alert>
-		{:else if tab === 'sso'}
+		{#if tab === 'sso'}
 			<SettingsPageHeader
 				title="Single Sign-On"
 				description="Configure SSO providers to let users authenticate using their existing identity provider credentials. To test SSO, save the settings and try to login in an incognito window."
 				link="https://www.windmill.dev/docs/misc/setup_oauth#sso"
 			/>
-			{#if !$enterpriseLicense || $enterpriseLicense.endsWith('_pro')}
-				<Alert type="info" title="Limited to 10 SSO users">
-					Without EE, the number of SSO users is limited to 10. SCIM/SAML is available on EE
-				</Alert>
-				<div class="mb-2"></div>
-			{/if}
+			<!-- Local patch (local/PATCHES.md): no SSO user-count notice; this build has no such cap. -->
 			<div class="flex gap-2 py-4">
 				<Toggle
 					options={{
