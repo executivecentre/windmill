@@ -7374,34 +7374,14 @@ async fn create_workspace_require_superadmin() -> String {
     format!("{}", *CREATE_WORKSPACE_REQUIRE_SUPERADMIN)
 }
 
-async fn _check_nb_of_workspaces(db: &DB) -> Result<()> {
-    let nb_workspaces = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM workspace WHERE id != 'admins' AND deleted = false",
-    )
-    .fetch_one(db)
-    .await?;
-    if nb_workspaces.unwrap_or(0) >= 2 {
-        return Err(Error::BadRequest(
-            "You have reached the maximum number of workspaces (2 outside of default workspace 'admins') without an enterprise license. Archive/delete another workspace to create a new one"
-                .to_string(),
-        ));
-    }
-    return Ok(());
+// Local patch (local/PATCHES.md): no workspace quota.
+async fn _check_nb_of_workspaces(_db: &DB) -> Result<()> {
+    Ok(())
 }
 
-async fn _check_nb_of_archived_workspaces(db: &DB) -> Result<()> {
-    let nb_archived = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM workspace WHERE id != 'admins' AND deleted = true",
-    )
-    .fetch_one(db)
-    .await?;
-    if nb_archived.unwrap_or(0) >= 1 {
-        return Err(Error::BadRequest(
-            "You have reached the maximum number of archived workspaces (1) without an enterprise license. Permanently delete or unarchive the existing archived workspace first"
-                .to_string(),
-        ));
-    }
-    return Ok(());
+// Local patch (local/PATCHES.md): no archived-workspace quota.
+async fn _check_nb_of_archived_workspaces(_db: &DB) -> Result<()> {
+    Ok(())
 }
 
 async fn create_workspace(

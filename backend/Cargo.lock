@@ -16005,6 +16005,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
+ "windmill-api",
  "windmill-api-auth",
  "windmill-api-client",
  "windmill-common",

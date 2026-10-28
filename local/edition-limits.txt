@@ -1,0 +1,44 @@
+backend/windmill-ai/src/query_builder.rs: "The input token count (10000) exceeds the maximum number of tokens allowed (8192)",
+backend/windmill-api-auth/src/lib.rs: "You have reached the maximum number of tokens (10000) on cloud. Contact support@windmill.dev to increase the limit"
+backend/windmill-api-flows/src/flows.rs: "You have reached the maximum number of flows (1000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
+backend/windmill-api-groups/src/groups.rs: _check_nb_of_groups(&_db).await?;
+backend/windmill-api-groups/src/groups.rs: async fn _check_nb_of_groups(_db: &DB) -> Result<()> {
+backend/windmill-api-scripts/src/scripts.rs: "You have reached the maximum number of scripts (5000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
+backend/windmill-api-workspaces/src/workspaces.rs: "The admins workspace is reserved for superadmins. Members cannot be added to it without an enterprise license.".to_string(),
+backend/windmill-api-workspaces/src/workspaces.rs: "The admins workspace is reserved for superadmins. Members cannot be added to it without an enterprise license.".to_string(),
+backend/windmill-api-workspaces/src/workspaces.rs: "You have reached the maximum number of workspaces (10) on cloud. Contact support@windmill.dev to increase the limit"
+backend/windmill-api-workspaces/src/workspaces.rs: // conflict instead of a misleading "maximum number of workspaces" error.
+backend/windmill-api-workspaces/src/workspaces.rs: _check_nb_of_archived_workspaces(&db).await?;
+backend/windmill-api-workspaces/src/workspaces.rs: _check_nb_of_workspaces(&db).await?;
+backend/windmill-api-workspaces/src/workspaces.rs: _check_nb_of_workspaces(&db).await?;
+backend/windmill-api-workspaces/src/workspaces.rs: _check_nb_of_workspaces(&db).await?;
+backend/windmill-api-workspaces/src/workspaces.rs: async fn _check_nb_of_archived_workspaces(_db: &DB) -> Result<()> {
+backend/windmill-api-workspaces/src/workspaces.rs: async fn _check_nb_of_workspaces(_db: &DB) -> Result<()> {
+backend/windmill-api/src/apps.rs: "You have reached the maximum number of apps (1000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
+backend/windmill-api/src/oauth2_oss.rs: pub async fn check_nb_of_user(_db: &DB) -> error::Result<()> {
+backend/windmill-common/src/instance_config.rs: /// Clamp `retention_period_secs` to `CE_MAX_RETENTION_PERIOD_SECS` on CE builds.
+backend/windmill-common/src/instance_config.rs: CE_MAX_RETENTION_PERIOD_SECS
+backend/windmill-common/src/instance_config.rs: if secs > CE_MAX_RETENTION_PERIOD_SECS {
+backend/windmill-common/src/instance_config.rs: pub const CE_MAX_RETENTION_PERIOD_SECS: i64 = 30 * 24 * 3600;
+backend/windmill-common/src/instance_config.rs: return serde_json::json!(CE_MAX_RETENTION_PERIOD_SECS);
+backend/windmill-store/src/resources.rs: "You have reached the maximum number of resources (10000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
+backend/windmill-store/src/variables.rs: "You have reached the maximum number of variables (10000) on cloud. Check your usage in Workspace Settings > General > Cloud Quotas. Contact support@windmill.dev to increase the limit"
+backend/windmill-worker/src/dbt_profiles.rs: "{a:?} was accepted without an enterprise license"
+frontend/src/lib/components/AutoscalingConfigEditor.svelte: <span class="text-xs text-secondary">The maximum number of workers to scale up to</span>
+frontend/src/lib/components/HistoricInputs.svelte: <td class="w-full px-2" colspan="3">limited to 5 runs</td>
+frontend/src/lib/components/HttpAgentWorkerDrawer.svelte: you can only use the `agent_test` tag and it is limited to 100 jobs.
+frontend/src/lib/components/assets/VolumesDrawer.svelte: Volumes are limited to 20 per workspace and 50 MB per file. Upgrade to Enterprise Edition
+frontend/src/lib/components/flows/agentFormFields.ts: 'Windmill stores the conversation and sends it with each request. On keeps all of it, summarizing the older part once it nears the context window. Legacy keeps only a fixed number of the last messages. Without instance object storage, saved memory is limited to 100KB: On tries a summary, then keeps the newest complete conversation that fits, starting with a user message. If none fits, memory is not updated.',
+frontend/src/lib/components/flows/content/FlowRetries.svelte: 'Upon error this step is retried with a delay and a maximum number of attempts as defined below.',
+frontend/src/lib/components/instanceSettings.ts: // Mirrors CE_MAX_RETENTION_PERIOD_SECS, which the backend clamps to on write.
+frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte: !$enterpriseLicense && nonAdminWorkspaceCount >= CE_MAX_NON_ADMIN_WORKSPACES
+frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte: // the number of non-'admins' workspaces (backend _check_nb_of_workspaces,
+frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte: const CE_MAX_NON_ADMIN_WORKSPACES = Number.POSITIVE_INFINITY // local patch: no cap (local/PATCHES.md)
+frontend/src/lib/components/sessions/WorkspaceFamilyPicker.svelte: title="Community edition is limited to {CE_MAX_NON_ADMIN_WORKSPACES +
+frontend/src/lib/components/sessions/sessionState.svelte.ts: // workspaces (backend _check_nb_of_workspaces). An enterprise license
+frontend/src/lib/components/sessions/sessionState.svelte.ts: `Community edition is limited to ${CE_MAX_NON_ADMIN_WORKSPACES + 1} workspaces — archive a workspace or pick one to run in`
+frontend/src/lib/components/sessions/sessionState.svelte.ts: const CE_MAX_NON_ADMIN_WORKSPACES = Number.POSITIVE_INFINITY // local patch: no cap (local/PATCHES.md)
+frontend/src/lib/components/sessions/sessionState.svelte.ts: if (!get(enterpriseLicense) && nonAdminWorkspaceCount >= CE_MAX_NON_ADMIN_WORKSPACES) {
+frontend/src/lib/components/sessions/sessionState.test.ts: // commit-path's CE workspace-cap check (mirror of backend _check_nb_of_workspaces)
+frontend/src/lib/components/triggers/email/DefaultEmailPanel.svelte: Email triggers on Windmill Community Edition are limited to 100 emails per day.
+frontend/src/lib/components/triggers/email/EmailTriggerPanel.svelte: Email triggers on Windmill Community Edition are limited to 100 emails per day.

@@ -1261,7 +1261,7 @@ export async function commitSessionWorkspace(
 		// letting materializeFork hit a backend rejection. Keep the pending fork
 		// set so the block persists until the user picks a non-fork workspace
 		// (setSessionPendingWorkspace clears it).
-		const CE_MAX_NON_ADMIN_WORKSPACES = 2
+		const CE_MAX_NON_ADMIN_WORKSPACES = Number.POSITIVE_INFINITY // local patch: no cap (local/PATCHES.md)
 		const nonAdminWorkspaceCount = get(userWorkspaces).filter((w) => w.id !== 'admins').length
 		if (!get(enterpriseLicense) && nonAdminWorkspaceCount >= CE_MAX_NON_ADMIN_WORKSPACES) {
 			throw new Error(

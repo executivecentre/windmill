@@ -155,7 +155,7 @@
 	// mirror the backend count with the client-side workspace list to hide the
 	// affordance once the cap is reached; the server still enforces the real
 	// (instance-wide) check on commit, so this is purely UX.
-	const CE_MAX_NON_ADMIN_WORKSPACES = 2
+	const CE_MAX_NON_ADMIN_WORKSPACES = Number.POSITIVE_INFINITY // local patch: no cap (local/PATCHES.md)
 	const nonAdminWorkspaceCount = $derived($userWorkspaces.filter((w) => w.id !== 'admins').length)
 	const ceWorkspaceCapReached = $derived(
 		!$enterpriseLicense && nonAdminWorkspaceCount >= CE_MAX_NON_ADMIN_WORKSPACES
