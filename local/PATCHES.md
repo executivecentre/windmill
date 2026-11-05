@@ -6,7 +6,9 @@ This branch, `feature/custom-unlimited`, is Windmill's open-source code with a f
 - SSO sign-in (Microsoft and the other providers of Instance settings → SSO), which the
   open-source code leaves as a stub;
 - user creation and password changes, also stubs;
-- no credentials in the request log.
+- no credentials in the request log;
+- Cargo's version where the build cannot describe a release tag, so version-gated features stay
+  on.
 
 It is built from Community Edition code only, with the cargo features
 `oss_core,all_languages,jemalloc` (never `private`, `enterprise`, `no_auth` or `oss`), and uses no
@@ -46,6 +48,19 @@ Windmill's migrations only move forward: back up the database before a new relea
 - **Reason**: upstream ignores every directory named `local`; this fork keeps its notes and checks
   in the root `local/`.
 - **Re-apply**: keep `!/local/` right after whatever rule matches the root `local/`.
+
+### `backend/windmill-common/src/utils.rs`
+
+- **Change**: the `git_version!` call that defines `GIT_VERSION` drops `--always` and takes
+  `cargo_prefix = "v"`, so a build in which `git describe` finds no tag, or cannot run, reports
+  `v<Cargo version>`, not a bare commit hash or `unknown-version`.
+- **Reason**: this fork has no tags, and the image is built from it as a submodule of the
+  deployment repository, whose `.git` file names a directory outside the build context, so
+  `git describe` fails there. A bare hash or `unknown-version` parses as 0.1.0, which
+  `min_version.rs` takes for the oldest worker: every version-gated feature turns off (token
+  hashes, AES-GCM secrets, ...), and the raw-app bundler asks npm for `windmill-cli@0.1.0`.
+- **Re-apply**: keep `cargo_prefix = "v"`, and no `--always`, on whatever defines `GIT_VERSION`,
+  and check that `windmill --version` in a built image prints the release.
 
 ### `backend/windmill-api-groups/src/groups.rs`
 
