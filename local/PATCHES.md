@@ -134,7 +134,9 @@ Windmill's migrations only move forward: back up the database before a new relea
 ## Files added outside `local/`
 
 They sit next to upstream code because the build and test layout needs them there, and they
-conflict with nothing on rebase.
+conflict with nothing on rebase. They do build upstream types, though: a field upstream adds to
+one breaks the build, not the merge, and neither git nor `check-upstream.sh` notices it, only a
+compile.
 
 - `backend/windmill-api/src/oauth2_oss_local.rs`: SSO sign-in. Providers come from the `oauths`
   instance setting (Instance settings → SSO): one with a `login_config` (Microsoft with its tenant,
@@ -143,7 +145,9 @@ conflict with nothing on rebase.
   matches the account by lower-cased e-mail (`docs/auth-surface.md`): an account of the same
   provider signs in, a `pending_oauth` one is claimed, a new e-mail gets an account unless
   pre-existing users are required, superadmin, devops and disabled accounts are refused, and so
-  are accounts of another login type unless pre-existing users are required.
+  are accounts of another login type unless pre-existing users are required. It sends no PKCE:
+  the SSO tab's "Send PKCE" toggle, switched on for a new provider, has no effect in this build,
+  and a provider that requires PKCE cannot sign users in.
 - `backend/windmill-api/src/users_oss_local.rs`: user creation, password changes (Argon2id) and
   the account insertion SSO sign-in shares.
 - `backend/windmill-api-integration-tests/tests/oss_sso_login.rs`: SSO sign-in against a mock

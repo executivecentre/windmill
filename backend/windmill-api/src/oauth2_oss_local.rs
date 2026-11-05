@@ -84,6 +84,8 @@ pub(crate) fn build_login_clients(
                         token_response_path: config.token_response_path,
                         token_url: config.token_url,
                         has_shared_credentials: true,
+                        // Not read: `login` and `login_callback` send no PKCE (local/PATCHES.md).
+                        pkce: entry.pkce.unwrap_or(false),
                     },
                 );
             }
