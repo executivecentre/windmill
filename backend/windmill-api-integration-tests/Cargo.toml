@@ -23,6 +23,8 @@ http_trigger = ["windmill-test-utils/http_trigger"]
 
 [dependencies]
 windmill-test-utils.workspace = true
+# Local patch (local/PATCHES.md): tests/oss_sso_login.rs loads SSO clients into the server.
+windmill-api = { workspace = true, default-features = false, features = ["oauth2"] }
 windmill-api-client.workspace = true
 windmill-common = { workspace = true, default-features = false }
 windmill-native-triggers = { workspace = true, features = ["native_trigger"] }
