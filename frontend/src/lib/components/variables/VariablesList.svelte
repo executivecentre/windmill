@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getLocalDraftHint } from '$lib/localDraftHints.svelte'
+	import { isNewTabClick } from '$lib/navigation'
 	import CenteredPage from '$lib/components/CenteredPage.svelte'
 	import {
 		Alert,
@@ -48,7 +49,7 @@
 		Link,
 		Pen,
 		RefreshCw,
-		Shield,
+		UserPlus,
 		Trash,
 		Building,
 		CalendarClock,
@@ -59,6 +60,7 @@
 	} from 'lucide-svelte'
 	import { untrack } from 'svelte'
 	import { page } from '$app/stores'
+	import { describeExternalRef, isExternalRef } from '$lib/externalSecretRef'
 	import { useHostedPage } from '$lib/components/hostedPage'
 	import {
 		useOperatingWorkspace,
@@ -454,7 +456,8 @@
 												<a
 													class="break-all"
 													id="edit-{path}"
-													onclick={() => {
+													onclick={(e) => {
+														if (!hosted && isNewTabClick(e)) return
 														handledHash = `#${path}`
 														editVariable(path)
 													}}
@@ -490,7 +493,9 @@
 										<Cell>
 											<span class="inline-flex flex-row items-center gap-2">
 												<div class="text-xs break-words">
-													{#if value}
+													{#if is_secret && isExternalRef(value)}
+														{describeExternalRef(value ?? '')}
+													{:else if value}
 														{truncate(value, 20)}
 													{:else}
 														&lowast;&lowast;&lowast;&lowast;
@@ -647,11 +652,11 @@
 																]
 															: []),
 														{
-															displayName: 'Permissions',
+															displayName: 'Share',
 															action: () => {
 																shareModal?.openDrawer(path, 'variable')
 															},
-															icon: Shield
+															icon: UserPlus
 														},
 														...(account != undefined
 															? [

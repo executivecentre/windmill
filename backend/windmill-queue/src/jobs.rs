@@ -43,7 +43,8 @@ use windmill_common::auth::JobPerms;
 use windmill_common::bench::BenchmarkIter;
 use windmill_common::jobs::{
     args_contain_nul, normalize_nul_in_args, sanitize_untrusted_args, script_path_to_payload,
-    JobTriggerKind, TriggerKindLabel, EMAIL_ERROR_HANDLER_USER_EMAIL, MODULES_ARG,
+    JobTriggerKind, TriggerKindLabel, EMAIL_ERROR_HANDLER_USER_EMAIL, FLOW_TIMEOUT_CANCELER,
+    MODULES_ARG,
 };
 use windmill_common::min_version::{
     MIN_VERSION_SUPPORTS_DEBOUNCING, MIN_VERSION_SUPPORTS_DEBOUNCING_V2,
@@ -77,6 +78,7 @@ use windmill_common::{
     },
     jobs::{get_payload_tag_from_prefixed_path, JobKind, JobPayload, RawCode},
     min_version::{MIN_VERSION_IS_AT_LEAST_1_432, MIN_VERSION_IS_AT_LEAST_1_440},
+    runnable_ref::RunnableRef,
     schedule::Schedule,
     scripts::{get_full_hub_script_by_path, ScriptHash, ScriptLang},
     users::{SUPERADMIN_NOTIFICATION_EMAIL, SUPERADMIN_SECRET_EMAIL},
@@ -299,7 +301,7 @@ pub async fn cancel_job<'c>(
 
     let mut job = job.unwrap();
 
-    if require_anonymous && job.created_by != "anonymous" {
+    if require_anonymous && job.created_by != windmill_common::usernames::ANONYMOUS_USERNAME {
         return Err(Error::BadRequest(
             "You are not logged in and this job was not created by an anonymous user like you so you cannot cancel it".to_string(),
         ));
@@ -427,6 +429,69 @@ ORDER BY depth, id
         }
     }
     Ok((tx, Some(id)))
+}
+
+/// Enforces the `timeout` of a root flow or a subflow step's flow where no worker holds the
+/// flow: it is cancelled with its steps as by a user, which also wakes a flow parked at an
+/// approval, and the worker sends a flow cancelled by [`FLOW_TIMEOUT_CANCELER`] to its failure
+/// module before ending it. `singlestepflow` is left out: its `timeout` is its script's.
+pub async fn cancel_timed_out_flows(db: &Pool<Postgres>) -> error::Result<()> {
+    // Same shape as the zombie flow sweep: running flow jobs of the queue, joined by id. A
+    // subflow step's flow is a `flow` at any depth; a child `flowpreview` or `flownode` is a
+    // loop iteration or branch body, which carries its module's `timeout`, not a flow's.
+    let flows = sqlx::query!(
+        "SELECT q.id, q.workspace_id, j.timeout AS \"timeout!\"
+        FROM v2_job_queue q JOIN v2_job j USING (id)
+        WHERE q.running = true AND q.canceled_by IS NULL
+            AND (j.kind = 'flow' OR (j.kind = 'flowpreview' AND j.parent_job IS NULL))
+            AND j.timeout > 0
+            AND q.started_at + make_interval(secs => j.timeout) <= now()"
+    )
+    .fetch_all(db)
+    .await?;
+
+    for flow in flows {
+        if let Err(e) = cancel_timed_out_flow(db, flow.id, &flow.workspace_id, flow.timeout).await {
+            tracing::error!("Error cancelling timed out flow {}: {e:#}", flow.id);
+        }
+    }
+    Ok(())
+}
+
+async fn cancel_timed_out_flow(
+    db: &Pool<Postgres>,
+    id: Uuid,
+    w_id: &str,
+    timeout: i32,
+) -> error::Result<()> {
+    let mut tx = db.begin().await?;
+    // Another server's sweep may have cancelled it since the select: cancelling again would
+    // cancel the failure module the worker has started for it since.
+    let claimed = sqlx::query_scalar!(
+        "SELECT 1 FROM v2_job_queue WHERE id = $1 AND canceled_by IS NULL FOR UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .is_some();
+    if !claimed {
+        return Ok(());
+    }
+    let reason = windmill_common::jobs::flow_timeout_reason(timeout);
+    tracing::info!("Flow {id} in workspace {w_id}: {reason}");
+    let (tx, _) = cancel_job(
+        FLOW_TIMEOUT_CANCELER,
+        Some(reason),
+        id,
+        w_id,
+        tx,
+        db,
+        false,
+        false,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /* TODO retry this? */
@@ -2779,13 +2844,7 @@ pub async fn send_error_to_global_handler<'a, T: Serialize + Send + Sync>(
     result: Json<&T>,
 ) -> Result<(), Error> {
     if let Some(ref global_error_handler) = *GLOBAL_ERROR_HANDLER_PATH_IN_ADMINS_WORKSPACE {
-        let prefixed_global_error_handler_path = if global_error_handler.starts_with("script/")
-            || global_error_handler.starts_with("flow/")
-        {
-            global_error_handler.clone()
-        } else {
-            format!("script/{}", global_error_handler)
-        };
+        let global_error_handler = RunnableRef::from_setting(global_error_handler)?;
         push_error_handler(
             db,
             queued_job.id,
@@ -2793,7 +2852,7 @@ pub async fn send_error_to_global_handler<'a, T: Serialize + Send + Sync>(
             queued_job.runnable_path.clone(),
             queued_job.is_flow(),
             &queued_job.workspace_id,
-            &prefixed_global_error_handler_path,
+            &global_error_handler,
             result,
             None,
             queued_job.started_at,
@@ -2836,29 +2895,33 @@ pub async fn report_error_to_workspace_handler_or_critical_side_channel(
     let (error_handler, error_handler_extra_args) = row_result;
 
     if let Some(error_handler) = error_handler {
-        if let Err(err) = push_error_handler(
-            db,
-            queued_job.id,
-            queued_job.schedule_path(),
-            queued_job.runnable_path.clone(),
-            queued_job.is_flow(),
-            w_id,
-            &error_handler,
-            Json(&json!({
-                "error": {
-                    "message": error_message
-                }
-            })),
-            None,
-            queued_job.started_at,
-            error_handler_extra_args,
-            &queued_job.permissioned_as_email,
-            None,
-            false,
-            None,
-        )
-        .await
-        {
+        let pushed = async {
+            let error_handler = RunnableRef::from_prefixed(&error_handler)?;
+            push_error_handler(
+                db,
+                queued_job.id,
+                queued_job.schedule_path(),
+                queued_job.runnable_path.clone(),
+                queued_job.is_flow(),
+                w_id,
+                &error_handler,
+                Json(&json!({
+                    "error": {
+                        "message": error_message
+                    }
+                })),
+                None,
+                queued_job.started_at,
+                error_handler_extra_args,
+                &queued_job.permissioned_as_email,
+                None,
+                false,
+                None,
+            )
+            .await
+        }
+        .await;
+        if let Err(err) = pushed {
             tracing::error!(
                 "Could not push workspace error handler trying to handle critical error ({error_message}) of failed job ({}): {}",
                 queued_job.id,
@@ -3022,7 +3085,7 @@ pub async fn send_error_to_workspace_handler<'a, 'c, T: Serialize + Send + Sync>
             queued_job.runnable_path.clone(),
             queued_job.is_flow(),
             &queued_job.workspace_id,
-            &error_handler,
+            &RunnableRef::from_prefixed(&error_handler)?,
             result,
             None,
             queued_job.started_at,
@@ -3130,7 +3193,7 @@ pub async fn send_success_to_workspace_handler<'a, 'c, T: Serialize + Send + Syn
             queued_job.runnable_path.clone(),
             queued_job.is_flow(),
             &queued_job.workspace_id,
-            &success_handler,
+            &RunnableRef::from_prefixed(&success_handler)?,
             result,
             queued_job.started_at,
             success_handler_extra_args,
@@ -3392,47 +3455,6 @@ pub async fn try_schedule_next_job<'c>(
 
 const ERROR_HANDLER_PATH_EMAIL: &str = "/workspace-or-error-handler-email";
 
-/// Every handler version the frontend has offered as a preset (`frontend/src/lib/hubPaths.json`
-/// and its history, which stored schedules still point at). Matched whole: a hub script is
-/// resolved by its numeric id alone, so the name after it proves nothing about its code.
-const PRESET_HANDLER_PATHS: [&str; 23] = [
-    "hub/6512/workspace-or-schedule-error-handler-slack",
-    "hub/5792/workspace-or-schedule-error-handler-slack",
-    "hub/9079/workspace-or-schedule-error-handler-slack",
-    "hub/9206/workspace-or-schedule-error-handler-slack",
-    "hub/19741/workspace-or-schedule-error-handler-slack",
-    "hub/28241/workspace-or-schedule-error-handler-slack",
-    "hub/28794/workspace-or-schedule-error-handler-slack",
-    "hub/2431/slack/schedule-error-handler-slack",
-    "hub/2430/slack/schedule-recovery-handler-slack",
-    "hub/9067/slack/schedule-recovery-handler-slack",
-    "hub/9080/slack/schedule-recovery-handler-slack",
-    "hub/28239/slack/schedule-recovery-handler-slack",
-    "hub/28791/slack/schedule-recovery-handler-slack",
-    "hub/9069/slack/schedule-success-handler-slack",
-    "hub/9072/slack/schedule-success-handler-slack",
-    "hub/28220/slack/schedule-success-handler-slack",
-    "hub/28240/slack/schedule-success-handler-slack",
-    "hub/28793/slack/schedule-success-handler-slack",
-    "hub/11598/workspace-or-schedule-error-handler-teams",
-    "hub/19742/workspace-or-schedule-error-handler-teams",
-    "hub/11593/schedule-recovery-handler-teams",
-    "hub/11596/schedule-success-handler-teams",
-    "hub/19795/workspace-or-error-handler-email",
-];
-
-/// The preset handler Windmill ships on the hub that `handler_path` names, `None` for user code.
-fn preset_handler(handler_path: &str) -> Option<&'static str> {
-    let path = handler_path.strip_prefix("script/").unwrap_or(handler_path);
-    PRESET_HANDLER_PATHS.into_iter().find(|p| *p == path)
-}
-
-/// Whether `handler_path` is a preset hub handler, which runs as the shared handler identity
-/// (Slack bot token, instance SMTP) instead of as the schedule or user that set it.
-pub fn is_preset_handler_path(handler_path: &str) -> bool {
-    preset_handler(handler_path).is_some()
-}
-
 /// `(email, permissioned_as)` a schedule handler runs as. The handler identity reads the
 /// workspace Slack bot token and may send through the instance SMTP, and a schedule's handlers
 /// are set by anyone who can write the schedule: only the preset hub handlers get it, custom
@@ -3440,20 +3462,21 @@ pub fn is_preset_handler_path(handler_path: &str) -> bool {
 pub async fn schedule_handler_identity(
     db: &Pool<Postgres>,
     w_id: &str,
-    handler_path: &str,
+    handler: &RunnableRef,
     schedule_permissioned_as: &str,
     preset_email: &str,
 ) -> error::Result<(String, String)> {
-    if is_preset_handler_path(handler_path) {
+    if handler.preset_handler().is_some() {
         return Ok((
             preset_email.to_string(),
             ERROR_HANDLER_USER_GROUP.to_string(),
         ));
     }
-    if handler_path.contains("hub/") && handler_path.contains("-handler-") {
+    if handler.path().starts_with("hub/") && handler.path().contains("-handler-") {
         tracing::warn!(
-            "schedule handler {handler_path} in {w_id} is named like a preset but is not a pinned \
-             preset version: it runs as the schedule ({schedule_permissioned_as})"
+            "schedule handler {} in {w_id} is named like a preset but is not a pinned preset \
+             version: it runs as the schedule ({schedule_permissioned_as})",
+            handler.prefixed()
         );
     }
     let email =
@@ -3465,7 +3488,7 @@ pub async fn schedule_handler_identity(
 async fn error_handler_identity(
     db: &Pool<Postgres>,
     w_id: &str,
-    error_handler_path: &str,
+    error_handler: &RunnableRef,
     is_global_error_handler: bool,
     schedule_permissioned_as: Option<&str>,
 ) -> error::Result<(String, String)> {
@@ -3479,13 +3502,14 @@ async fn error_handler_identity(
         return schedule_handler_identity(
             db,
             w_id,
-            error_handler_path,
+            error_handler,
             schedule_permissioned_as,
             SCHEDULE_ERROR_HANDLER_USER_EMAIL,
         )
         .await;
     }
-    let email = if preset_handler(error_handler_path)
+    let email = if error_handler
+        .preset_handler()
         .is_some_and(|p| p.ends_with(ERROR_HANDLER_PATH_EMAIL))
     {
         EMAIL_ERROR_HANDLER_USER_EMAIL
@@ -3502,7 +3526,7 @@ pub async fn push_error_handler<'a, 'c, T: Serialize + Send + Sync>(
     script_path: Option<String>,
     is_flow: bool,
     w_id: &str,
-    on_failure_path: &str,
+    on_failure: &RunnableRef,
     result: Json<&'a T>,
     failed_times: Option<i32>,
     started_at: Option<DateTime<Utc>>,
@@ -3519,7 +3543,7 @@ pub async fn push_error_handler<'a, 'c, T: Serialize + Send + Sync>(
         w_id
     };
     let (payload, tag, on_behalf_of) =
-        get_payload_tag_from_prefixed_path(on_failure_path, db, handler_w_id).await?;
+        get_payload_tag_from_prefixed_path(&on_failure.prefixed(), db, handler_w_id).await?;
 
     let mut extra = HashMap::new();
     if let Some(schedule_path) = schedule_path {
@@ -3554,7 +3578,7 @@ pub async fn push_error_handler<'a, 'c, T: Serialize + Send + Sync>(
         error_handler_identity(
             db,
             w_id,
-            on_failure_path,
+            on_failure,
             is_global_error_handler,
             schedule_permissioned_as,
         )
@@ -3706,7 +3730,7 @@ pub async fn push_success_handler<'a, 'c, T: Serialize + Send + Sync>(
     script_path: Option<String>,
     is_flow: bool,
     w_id: &str,
-    on_success_path: &str,
+    on_success: &RunnableRef,
     result: Json<&'a T>,
     started_at: Option<DateTime<Utc>>,
     extra_args: Option<Json<Box<RawValue>>>,
@@ -3714,7 +3738,7 @@ pub async fn push_success_handler<'a, 'c, T: Serialize + Send + Sync>(
     priority: Option<i16>,
 ) -> windmill_common::error::Result<Uuid> {
     let (payload, tag, on_behalf_of) =
-        get_payload_tag_from_prefixed_path(on_success_path, db, w_id).await?;
+        get_payload_tag_from_prefixed_path(&on_success.prefixed(), db, w_id).await?;
 
     let mut extra = HashMap::new();
     if let Some(schedule_path) = schedule_path {
@@ -3855,6 +3879,9 @@ pub struct MiniPulledJob {
     /// unrestricted token.
     #[serde(default)]
     pub job_token_scopes: Option<Vec<String>>,
+    /// `job_perms.mcp_client`, read only on pull: see `ApiAuthed::mcp_client`.
+    #[serde(default)]
+    pub mcp_client: Option<String>,
 }
 
 impl MiniPulledJob {
@@ -3927,6 +3954,7 @@ impl MiniPulledJob {
             concurrent_limit: None,
             concurrency_time_window_s: None,
             job_token_scopes: None,
+            mcp_client: None,
         }
     }
 }
@@ -4241,6 +4269,7 @@ impl PulledJob {
                 end_user_email: self.job.permissioned_as_end_user_email.clone(),
                 job_token_scopes: self.job.job_token_scopes.clone(),
                 viewer_data_access: self.job.viewer_data_access.unwrap_or(false),
+                mcp_client: self.job.mcp_client.clone(),
             }),
             _ => None,
         };
@@ -4349,7 +4378,8 @@ pub async fn get_mini_pulled_job<'c>(
         visible_to_owner,
         NULL as permissioned_as_end_user_email,
         NULL::boolean as viewer_data_access,
-        job_perms.job_token_scopes
+        job_perms.job_token_scopes,
+        job_perms.mcp_client
         FROM v2_job_queue INNER JOIN v2_job ON v2_job.id = v2_job_queue.id LEFT JOIN v2_job_status ON v2_job_status.id = v2_job_queue.id
         LEFT JOIN job_perms ON job_perms.job_id = v2_job_queue.id WHERE v2_job_queue.id = $1",
         job_id,
@@ -6685,8 +6715,14 @@ async fn push_inner<'c, 'd>(
         /// A `dependencies` job that only compiles an already-deployed script's binary.
         /// It shares the job kind, but not the queue policy lock generation needs.
         build_binary_only: bool,
+        /// The flow's own wall-clock `timeout`, which a step timeout passed by the caller overrides.
+        flow_timeout: Option<i32>,
     }
     let mut preprocessed = None;
+    let (identity_mocked, identity_skipped) = match &job_payload {
+        JobPayload::Identity { mocked, skipped } => (*mocked, *skipped),
+        _ => (false, false),
+    };
     #[allow(unused)]
     let JobPayloadUntagged {
         runnable_id,
@@ -6706,6 +6742,7 @@ async fn push_inner<'c, 'd>(
         labels,
         job_token_scopes,
         build_binary_only,
+        flow_timeout,
     } = match job_payload {
         JobPayload::ScriptHash {
             hash,
@@ -7009,6 +7046,7 @@ async fn push_inner<'c, 'd>(
             let cache_ttl = value.cache_ttl.map(|x| x as i32);
             let priority = value.priority;
             JobPayloadUntagged {
+                flow_timeout: value.timeout,
                 runnable_path: path,
                 job_kind: JobKind::FlowPreview,
                 flow_status: Some(flow_status),
@@ -7256,6 +7294,7 @@ async fn push_inner<'c, 'd>(
                 flow_env: None,
                 delete_after_use: None,
                 delete_after_secs: None,
+                timeout: None,
             };
             // this is a new flow being pushed, flow_status is set to flow_value:
             let flow_status: FlowStatus = FlowStatus::new(&flow_value);
@@ -7320,6 +7359,7 @@ async fn push_inner<'c, 'd>(
                 None
             };
             JobPayloadUntagged {
+                flow_timeout: data.value().timeout,
                 runnable_id: Some(version), // Starting from `v1.436`, the version id is used to fetch the value on pull.
                 runnable_path: Some(path),
                 job_kind: JobKind::Flow,
@@ -7425,6 +7465,7 @@ async fn push_inner<'c, 'd>(
                 None
             };
             JobPayloadUntagged {
+                flow_timeout: value.timeout,
                 runnable_id: version,
                 runnable_path: flow_path,
                 job_kind: original_kind,
@@ -7461,7 +7502,7 @@ async fn push_inner<'c, 'd>(
                 ..Default::default()
             }
         }
-        JobPayload::Identity => {
+        JobPayload::Identity { .. } => {
             JobPayloadUntagged { job_kind: JobKind::Identity, ..Default::default() }
         }
         JobPayload::Noop => JobPayloadUntagged { job_kind: JobKind::Noop, ..Default::default() },
@@ -7777,7 +7818,8 @@ async fn push_inner<'c, 'd>(
             authed.clone()
         }
         _ => {
-            if authed.is_some() {
+            // An on-behalf-of run passes its MCP caller only to record the client.
+            if authed.is_some_and(|a| a.mcp_client.is_none()) {
                 tracing::warn!("Authed passed to push is not the same as permissioned_as, refetching direclty permissions for job {job_id}...")
             }
             windmill_common::auth::fetch_authed_from_permissioned_as(
@@ -7911,9 +7953,9 @@ async fn push_inner<'c, 'd>(
             INSERT INTO v2_job_runtime (id, ping) VALUES ($1, null)
         ),
         inserted_job_perms AS (
-            INSERT INTO job_perms (job_id, email, username, is_admin, is_operator, folders, groups, workspace_id, end_user_email, job_token_scopes)
-            values ($1, $32, $33, $34, $35, $36, $37, $2, $41, $47)
-            ON CONFLICT (job_id) DO UPDATE SET email = EXCLUDED.email, username = EXCLUDED.username, is_admin = EXCLUDED.is_admin, is_operator = EXCLUDED.is_operator, folders = EXCLUDED.folders, groups = EXCLUDED.groups, workspace_id = EXCLUDED.workspace_id, end_user_email = EXCLUDED.end_user_email, job_token_scopes = EXCLUDED.job_token_scopes
+            INSERT INTO job_perms (job_id, email, username, is_admin, is_operator, folders, groups, workspace_id, end_user_email, job_token_scopes, mcp_client)
+            values ($1, $32, $33, $34, $35, $36, $37, $2, $41, $47, $48)
+            ON CONFLICT (job_id) DO UPDATE SET email = EXCLUDED.email, username = EXCLUDED.username, is_admin = EXCLUDED.is_admin, is_operator = EXCLUDED.is_operator, folders = EXCLUDED.folders, groups = EXCLUDED.groups, workspace_id = EXCLUDED.workspace_id, end_user_email = EXCLUDED.end_user_email, job_token_scopes = EXCLUDED.job_token_scopes, mcp_client = EXCLUDED.mcp_client
         )
         INSERT INTO v2_job_queue
             (workspace_id, id, running, scheduled_for, started_at, tag, priority, cache_ignore_s3_path, runnable_settings_handle)
@@ -7944,7 +7986,9 @@ async fn push_inner<'c, 'd>(
         flow_innermost_root_job,
         guarded_concurrent_limit,
         guarded_concurrency_time_window_s,
-        custom_timeout,
+        // A calling step's timeout replaces the flow's own, as it replaces a script's.
+        windmill_common::runnable_settings::none_if_non_positive(custom_timeout)
+            .or(windmill_common::runnable_settings::none_if_non_positive(flow_timeout)),
         flow_step_id,
         cache_ttl,
         final_priority,
@@ -7969,6 +8013,9 @@ async fn push_inner<'c, 'd>(
         runnable_path,
         workspace_id,
         job_token_scopes.as_deref() as Option<&[String]>,
+        // From the pusher's identity, not `job_authed`: a run on behalf of another identity
+        // re-fetches its permissions, but was still started through the same client.
+        authed.and_then(|a| a.mcp_client.as_deref()),
     )
     .execute(&mut *tx)
     .warn_after_seconds(1)
@@ -8021,6 +8068,24 @@ async fn push_inner<'c, 'd>(
         let uuid_str = uuid_string.as_str();
 
         let mut hm = HashMap::from([("uuid", uuid_str), ("permissioned_as", &permissioned_as)]);
+        if let Some(client) = authed.and_then(|a| a.mcp_client.as_deref()) {
+            hm.insert("mcp_client", client);
+        }
+        // A step's entry names its step: a no-code step has no runnable path to show as the
+        // resource, and a script step's path does not say which step of which flow ran it.
+        let parent_job_string = parent_job.map(|p| p.to_string());
+        if let Some(step) = flow_step_id.as_deref() {
+            hm.insert("step_id", step);
+        }
+        if let Some(p) = parent_job_string.as_deref() {
+            hm.insert("parent_job", p);
+        }
+        if identity_mocked {
+            hm.insert("mocked", "true");
+        }
+        if identity_skipped {
+            hm.insert("skipped", "true");
+        }
 
         let s: String;
         let operation_name = match job_kind {
@@ -8966,7 +9031,7 @@ pub async fn get_same_worker_job(
                     COALESCE(pj.runnable_path, v2_job.args->>'_FLOW_PATH') as parent_runnable_path,
                     p.email as permissioned_as_email, p.username as permissioned_as_username, p.is_admin as permissioned_as_is_admin,
                     p.is_operator as permissioned_as_is_operator, p.groups as permissioned_as_groups, p.folders as permissioned_as_folders, p.end_user_email as permissioned_as_end_user_email,
-                    p.viewer_data_access
+                    p.viewer_data_access, p.mcp_client
                     FROM v2_job_queue
                     INNER JOIN v2_job ON v2_job.id = v2_job_queue.id
                     LEFT JOIN v2_job_status ON v2_job_status.id = v2_job_queue.id
@@ -9121,42 +9186,6 @@ mod worker_own_script_tests {
             !MiniPulledJob { runnable_path: None, ..own_script("x", INIT_SCRIPT_TAG) }
                 .is_worker_own_script()
         );
-    }
-}
-
-#[cfg(test)]
-mod preset_handler_path_tests {
-    use super::is_preset_handler_path;
-
-    #[test]
-    fn only_pinned_hub_scripts_are_presets() {
-        assert!(is_preset_handler_path(
-            "script/hub/28791/slack/schedule-recovery-handler-slack"
-        ));
-        // The hub resolves by id: any other id is arbitrary hub code whatever its name.
-        assert!(!is_preset_handler_path(
-            "hub/13968/workspace-or-schedule-error-handler-slack"
-        ));
-        assert!(!is_preset_handler_path(
-            "script/u/me/workspace-or-schedule-error-handler-slack"
-        ));
-    }
-
-    /// A preset version bumped in the frontend without being pinned here would silently run as
-    /// the schedule's owner and lose access to the Slack bot token.
-    #[test]
-    fn frontend_presets_are_pinned() {
-        let hub_paths: std::collections::HashMap<String, String> =
-            serde_json::from_str(include_str!("../../../frontend/src/lib/hubPaths.json")).unwrap();
-        for (name, path) in hub_paths {
-            // Variable expiration handlers run as their own group whatever their path.
-            if path.contains("-handler-") && !path.contains("variable-expiration") {
-                assert!(
-                    is_preset_handler_path(&path),
-                    "{name}: {path} is not pinned"
-                );
-            }
-        }
     }
 }
 

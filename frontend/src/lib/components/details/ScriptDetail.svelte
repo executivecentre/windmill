@@ -71,7 +71,6 @@
 		Loader2,
 		Pen,
 		ChevronUpSquare,
-		Shield,
 		Trash,
 		Play,
 		ClipboardCopy,
@@ -717,27 +716,16 @@
 		menuItems.push({
 			label: 'Audit logs',
 			Icon: Eye,
-			onclick: () => {
-				onNavigate(`/audit_logs?resource=${script?.path}`)
-			}
-		})
-
-		menuItems.push({
-			label: 'Permissions',
-			Icon: Shield,
-			onclick: () => {
-				shareModal?.openDrawer(script?.path ?? '', 'script')
-			}
+			href: operatingHref(`/audit_logs?resource=${script.path}`),
+			onclick: interceptNav(onNavigate, `/audit_logs?resource=${script.path}`)
 		})
 
 		if (!$disableHubStore) {
 			menuItems.push({
 				label: 'Publish to Hub',
 				Icon: Globe2,
-				onclick: () => {
-					if (!script) return
-					window.open(scriptToHubUrl(script, $hubBaseUrlStore).toString(), '_blank', 'noopener')
-				}
+				href: scriptToHubUrl(script, $hubBaseUrlStore).toString(),
+				hrefTarget: '_blank'
 			})
 		}
 
@@ -848,7 +836,7 @@
 
 <DeployWorkspaceDrawer bind:this={deploymentDrawer} />
 <PersistentScriptDrawer bind:this={persistentScriptDrawer} />
-<ShareModal bind:this={shareModal} />
+<ShareModal bind:this={shareModal} source="detail" />
 
 <Drawer bind:open={versionsDrawerOpen} size="1200px">
 	<DrawerContent title="Versions History" on:close={() => (versionsDrawerOpen = false)} noPadding>
@@ -874,6 +862,9 @@
 				ownsPageHeader={!embedded}
 				{mainButtons}
 				menuItems={getMenuItems(script, deployUiSettings)}
+				onShare={script && caps.code
+					? () => shareModal?.openDrawer(script?.path ?? '', 'script')
+					: undefined}
 				bind:errorHandlerMuted={
 					() => script?.ws_error_handler_muted ?? false,
 					(v) => {

@@ -4,7 +4,7 @@
 	import Path from '$lib/components/Path.svelte'
 	import FlowCard from '../common/FlowCard.svelte'
 	import JobTokenScopesSetting from '$lib/components/JobTokenScopesSetting.svelte'
-	import { Alert, Tab, TabContent, Tabs } from '$lib/components/common'
+	import { SecondsInput, Tab, TabContent, Tabs } from '$lib/components/common'
 	import { getContext, tick } from 'svelte'
 	import type { FlowEditorContext } from '../types'
 	import SimpleEditor from '$lib/components/SimpleEditor.svelte'
@@ -26,6 +26,7 @@
 	import DeleteAfterUseSetting from '$lib/components/itemSettings/DeleteAfterUseSetting.svelte'
 	import RunOnBehalfOfSetting from '$lib/components/itemSettings/RunOnBehalfOfSetting.svelte'
 	import InvisibleRunsSetting from '$lib/components/itemSettings/InvisibleRunsSetting.svelte'
+	import PathMoveNote from '$lib/components/itemSettings/PathMoveNote.svelte'
 	import SettingIcons from '$lib/components/itemSettings/SettingIcons.svelte'
 	import ActiveSettingChips, {
 		revealSetting
@@ -61,8 +62,11 @@
 		customUi,
 		savedOnBehalfOfEmail,
 		savedOnBehalfOfPermissionedAs,
-		opWorkspace
+		opWorkspace,
+		deployedPath
 	} = getContext<FlowEditorContext>('FlowEditorContext')
+	// Without the deployed path, the path the editor opened on stands in.
+	const deployedFlowPath = $derived(deployedPath ? deployedPath() : $initialPathStore)
 
 	type FlowSettingsTab = 'metadata' | 'runtime' | 'permissions'
 
@@ -205,14 +209,7 @@
 											kind="flow"
 											workspaceOverride={opWorkspace?.()}
 										/>
-										{#if $initialPathStore && $pathStore && $pathStore !== $initialPathStore}
-											<Alert
-												type="info"
-												size="xs"
-												title="Deploy the flow to make the path change effective."
-												class="mt-2"
-											/>
-										{/if}
+										<PathMoveNote kind="flow" deployedPath={deployedFlowPath} path={$pathStore} />
 									</Label>
 								{/if}
 
@@ -329,6 +326,15 @@
 								{/if}
 
 								<SettingGroup label="Execution policy" class="flex flex-col gap-6">
+									<SettingToggle
+										setting="timeout"
+										label="Timeout"
+										tooltip="Wall-clock limit for the whole run, sleeps and approvals included. When it is reached, the running steps are cancelled, the error handler runs, and the run ends with a timeout error."
+										checked={!!flowStore.val.value.timeout}
+										onchange={(on) => (flowStore.val.value.timeout = on ? 3600 : undefined)}
+									>
+										<SecondsInput bind:seconds={flowStore.val.value.timeout} />
+									</SettingToggle>
 									{#if customUi?.settingsTabs?.concurrency != false}
 										<ConcurrencyLimitSetting
 											kind="flow"

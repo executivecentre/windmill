@@ -19,8 +19,10 @@ import { detectAuthGatewayChallenge } from "../../utils/http_guards.ts";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   createFrameworkPlugins,
+  createSharedUiPlugin,
   detectFrameworks,
   ensureNodeModules,
+  findSharedUiDir,
   getDevBuildOptions,
 } from "./bundle.ts";
 import { wmillTsDev as wmillTs } from "./wmillTsDev.ts";
@@ -228,7 +230,7 @@ const createHTML = (jsPath: string, cssPath: string, appCtx: unknown) => `
       </div>
     </div>
   </div>
-  <script>window.ctx = ${JSON.stringify(appCtx).replace(/</g, "\\u003c")};</script>
+  <script>window.ctx = ${JSON.stringify(appCtx).replace(/</g, "\\u003c")}; window.ctx.query = Object.fromEntries(new URLSearchParams(location.search));</script>
   <script src="${jsPath}"></script>
   <script>
     // Live reload via EventSource
@@ -593,6 +595,12 @@ async function dev(opts: DevOptions, appFolder?: string) {
   // Load framework-specific plugins (svelte) based on package.json
   const frameworkPlugins = await createFrameworkPlugins(appDir);
 
+  const sharedUiDir = findSharedUiDir(appDir);
+  const sharedUiPlugins =
+    sharedUiDir && fs.existsSync(sharedUiDir)
+      ? [createSharedUiPlugin(sharedUiDir, appDir)]
+      : [];
+
   const wmillPlugin = {
     name: "wmill-virtual",
     setup(build: any) {
@@ -663,6 +671,7 @@ async function dev(opts: DevOptions, appFolder?: string) {
         },
       },
       wmillPlugin,
+      ...sharedUiPlugins,
     ],
   });
 

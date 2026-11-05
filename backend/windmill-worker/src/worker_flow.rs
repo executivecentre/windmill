@@ -18,6 +18,7 @@ use crate::{
     JobCompletedSender, PreviousResult, SameWorkerSender, SendResultPayload, StepFailureKind,
     UpdateFlow, KEEP_JOB_DIR,
 };
+use windmill_common::variables::{build_crypt_with_key_suffix, encrypt, WorkspaceCrypt};
 
 use anyhow::Context;
 use async_once_cell::Lazy;
@@ -448,7 +449,7 @@ pub async fn update_flow_status_after_job_completion_internal(
     canceled_by: Option<CanceledBy>,
     mut flow_job_duration: Option<FlowJobDuration>,
     result: Arc<Box<RawValue>>,
-    step_failure: StepFailureKind,
+    mut step_failure: StepFailureKind,
     same_worker_tx: &SameWorkerSender,
     worker_dir: &str,
     stop_early_override: Option<bool>,
@@ -479,6 +480,7 @@ pub async fn update_flow_status_after_job_completion_internal(
         failure_step_recovers,
         _cleanup_module,
         chat_ai_info,
+        own_timeout,
     ) = {
         // tracing::debug!("UPDATE FLOW STATUS: {flow:?} {success} {result:?} {w_id} {depth}");
 
@@ -1800,7 +1802,16 @@ pub async fn update_flow_status_after_job_completion_internal(
             && step_failure.honors_step_error_policy()
             && (skip_seq_branch_failure || skip_loop_failures || continue_on_error);
 
+        // A flow cancelled by its own timeout still runs its failure module, once, before it
+        // ends, whatever its loops' stop conditions say. The subflows and loop iterations
+        // cancelled with it just stop, so `has_triggered_error_handler` (set on a parallel node,
+        // whose iterations normally run the handler) must not hold it back.
+        let own_timeout = cancelled_by_own_timeout(db, &flow_job).await?;
+        let timeout_to_failure_module =
+            own_timeout && !is_failure_step && flow_value.failure_module.is_some();
+
         let should_continue_flow = match success {
+            _ if timeout_to_failure_module => true,
             _ if stop_early => stop_early_err_msg.is_some() && flow_value.failure_module.is_some(), // if stop_early_err_msg some, we want to trigger the error handler before stopping the flow, if any
             _ if flow_job.is_canceled() => false,
             true => !is_last_step,
@@ -1832,6 +1843,26 @@ pub async fn update_flow_status_after_job_completion_internal(
         if recoverable_failure_at_last_step {
             success = true;
         }
+
+        // The timeout error is what the failure module and a calling step see, with or without a
+        // failure module, as a script's timeout is an `ExecutionErr` to its caller.
+        let nresult = if own_timeout && !is_failure_step {
+            if timeout_to_failure_module {
+                step_failure = StepFailureKind::FlowTimeout;
+            }
+            let message = format!(
+                "flow terminated due to timeout: {}",
+                flow_job
+                    .canceled_reason
+                    .as_deref()
+                    .unwrap_or("the flow exceeded its timeout")
+            );
+            Arc::new(to_raw_value(
+                &json!({ "error": { "name": "ExecutionErr", "message": message } }),
+            ))
+        } else {
+            nresult
+        };
 
         tracing::info!(id = %flow_job.id, root_id = %job_root, success = %success, stop_early = %stop_early, is_last_step = %is_last_step, step_failure = ?step_failure,
              skip_seq_branch_failure = %skip_seq_branch_failure, skip_loop_failures = %skip_loop_failures,
@@ -1873,6 +1904,7 @@ pub async fn update_flow_status_after_job_completion_internal(
             failure_step_recovers,
             old_status.cleanup_module,
             chat_ai_info,
+            own_timeout,
         )
     };
 
@@ -2214,8 +2246,15 @@ pub async fn update_flow_status_after_job_completion_internal(
                     RecUpdateFlowStatusAfterJobCompletion {
                         flow: parent_job,
                         job_id_for_status: flow,
-                        success: success && !is_failure_step,
-                        canceled_by: if !success { canceled_by.clone() } else { None },
+                        // A subflow that timed out is a failed step to its parent, as a script
+                        // that timed out is, whatever its last step's error policy, and not a
+                        // cancellation of the parent.
+                        success: success && !is_failure_step && !own_timeout,
+                        canceled_by: if !success && !own_timeout {
+                            canceled_by.clone()
+                        } else {
+                            None
+                        },
                         flow_job_duration: flow_job_duration.clone(),
                         result: nresult.clone(),
                         stop_early_override: if stop_early {
@@ -2456,7 +2495,8 @@ async fn advance_flow_status(
             v2_job.visible_to_owner,
             NULL as permissioned_as_end_user_email,
             NULL::boolean as viewer_data_access,
-            job_perms.job_token_scopes",
+            job_perms.job_token_scopes,
+            NULL::varchar as mcp_client",
         flow,
         &step_path as &[&str],
         step,
@@ -2888,11 +2928,132 @@ where
     }
 }
 
+/// The unresolved `flow_env` and its secret entries, so that the args stored on a step job
+/// never hold a resolved secret: an exact `flow_env.X` read stores the entry's reference,
+/// resolved (audited and masked) when the step runs like a static input, and any other
+/// expression reading a secret entry stores its result encrypted.
+///
+/// A subflow step resolves nothing in its args, so it gets the resolved value of a
+/// non-secret entry, while a secret one reaches it as a reference or encrypted, which its own
+/// steps resolve or decrypt (they share its root job id).
+pub(crate) struct FlowEnvRefs<'a> {
+    raw: &'a HashMap<String, Box<RawValue>>,
+    db: &'a DB,
+    workspace_id: String,
+    root_job_id: Uuid,
+    // Loaded by the first input whose expression mentions `flow_env`, so that the steps
+    // reading none of it cost no query.
+    secrets: tokio::sync::OnceCell<FlowEnvSecrets>,
+}
+
+struct FlowEnvSecrets {
+    entries: HashMap<String, Box<RawValue>>,
+    // Keyed on the root job id, which is what the step's worker decrypts `$encrypted:`
+    // args with. Present only when `entries` is non-empty.
+    crypt: Option<WorkspaceCrypt>,
+}
+
+impl<'a> FlowEnvRefs<'a> {
+    fn new(db: &'a DB, flow_job: &MiniPulledJob, raw: &'a HashMap<String, Box<RawValue>>) -> Self {
+        Self {
+            raw,
+            db,
+            workspace_id: flow_job.workspace_id.clone(),
+            root_job_id: get_root_job_id(flow_job),
+            secrets: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    async fn secrets(&self) -> error::Result<&FlowEnvSecrets> {
+        self.secrets.get_or_try_init(|| self.load_secrets()).await
+    }
+
+    async fn load_secrets(&self) -> error::Result<FlowEnvSecrets> {
+        let raw = self.raw;
+        let mut secret_keys = vec![];
+        let mut var_keys: Vec<(String, String)> = vec![];
+        for (k, v) in raw {
+            if !v.get().starts_with("\"$") {
+                continue;
+            }
+            let Ok(s) = serde_json::from_str::<String>(v.get()) else {
+                continue;
+            };
+            if s.starts_with("$encrypted:") {
+                secret_keys.push(k.clone());
+            } else if let Some(path) = s
+                .strip_prefix("$var:")
+                .or_else(|| s.strip_prefix("$jsonvar:"))
+            {
+                var_keys.push((k.clone(), path.to_string()));
+            }
+        }
+        if !var_keys.is_empty() {
+            let paths: Vec<String> = var_keys.iter().map(|(_, p)| p.clone()).collect();
+            let secret_paths = sqlx::query_scalar!(
+                "SELECT path FROM variable WHERE workspace_id = $1 AND path = ANY($2) AND is_secret",
+                &self.workspace_id,
+                &paths
+            )
+            .fetch_all(self.db)
+            .await?;
+            secret_keys.extend(
+                var_keys
+                    .into_iter()
+                    .filter(|(_, p)| secret_paths.contains(p))
+                    .map(|(k, _)| k),
+            );
+        }
+        let entries: HashMap<String, Box<RawValue>> = secret_keys
+            .into_iter()
+            .map(|k| (k.clone(), raw[&k].clone()))
+            .collect();
+        let crypt = if entries.is_empty() {
+            None
+        } else {
+            Some(
+                build_crypt_with_key_suffix(
+                    self.db,
+                    &self.workspace_id,
+                    &self.root_job_id.to_string(),
+                )
+                .await?,
+            )
+        };
+        Ok(FlowEnvSecrets { entries, crypt })
+    }
+}
+
+impl FlowEnvSecrets {
+    // Decided from the expression's text, by a literal `flow_env.KEY` / `flow_env["KEY"]`
+    // access: a dynamic key (`flow_env[k]`) or a destructured `flow_env` is not detected.
+    fn reads_secret(&self, expr: &str) -> bool {
+        let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+        self.entries.keys().any(|k| {
+            let dotted = [format!("flow_env.{k}"), format!("flow_env?.{k}")];
+            let bracketed = ["\"", "'", "`"].map(|q| format!("[{q}{k}{q}]"));
+            dotted.iter().any(|p| {
+                expr.match_indices(p.as_str()).any(|(i, _)| {
+                    !expr[..i].chars().next_back().is_some_and(ident)
+                        && !expr[i + p.len()..].chars().next().is_some_and(ident)
+                })
+            }) || bracketed.iter().any(|b| {
+                ["flow_env", "flow_env?."].iter().any(|o| {
+                    expr.match_indices(&format!("{o}{b}"))
+                        .any(|(i, _)| !expr[..i].chars().next_back().is_some_and(ident))
+                })
+            })
+        })
+    }
+}
+
 /// resumes should be in order of timestamp ascending, so that more recent are at the end
 #[instrument(level = "trace", skip_all)]
 async fn transform_input(
     flow_args: Marc<HashMap<String, Box<RawValue>>>,
     flow_env: Option<&HashMap<String, Box<RawValue>>>,
+    env_refs: Option<&FlowEnvRefs<'_>>,
+    into_subflow: bool,
     last_result: Arc<Box<RawValue>>,
     input_transforms: &HashMap<String, InputTransform>,
     resumes: Arc<Box<RawValue>>,
@@ -2930,6 +3091,22 @@ async fn transform_input(
                 mapped.insert(key.to_string(), to_raw_value(&value));
             }
             InputTransform::Javascript { expr } => {
+                let env_refs = env_refs.filter(|_| expr.contains("flow_env"));
+                if let Some(r) = env_refs {
+                    let exact_env = if into_subflow {
+                        &r.secrets().await?.entries
+                    } else {
+                        r.raw
+                    };
+                    if let Some(raw) = windmill_jseval::try_exact_property_access(
+                        expr.trim(),
+                        None,
+                        Some(exact_env),
+                    ) {
+                        mapped.insert(key.to_string(), raw);
+                        continue;
+                    }
+                }
                 let v = eval_timeout(
                     expr.to_string(),
                     env.clone(),
@@ -2945,6 +3122,16 @@ async fn transform_input(
                         "Error during isolated evaluation of expression `{expr}`:\n{e:#}"
                     ))
                 })?;
+                let secrets = match env_refs {
+                    Some(r) => Some(r.secrets().await?),
+                    None => None,
+                };
+                let v = match secrets {
+                    Some(s @ FlowEnvSecrets { crypt: Some(crypt), .. }) if s.reads_secret(expr) => {
+                        to_raw_value(&format!("$encrypted:{}", encrypt(crypt, v.get())))
+                    }
+                    _ => v,
+                };
                 mapped.insert(key.to_string(), v);
             }
             InputTransform::Ai => (),
@@ -3042,6 +3229,8 @@ pub async fn handle_flow(
             }
         }
     }
+
+    let env_refs = env_source.map(|raw| FlowEnvRefs::new(db, &flow_job, raw));
 
     let schedule_path = flow_job.schedule_path();
     if !flow_job.is_flow_step()
@@ -3186,6 +3375,7 @@ pub async fn handle_flow(
             status,
             flow,
             flow_env,
+            env_refs.as_ref(),
             no_flow_env,
             db,
             client,
@@ -3475,6 +3665,7 @@ async fn push_next_flow_job(
     mut status: FlowStatus,
     flow: &FlowValue,
     flow_env: Option<&HashMap<String, Box<RawValue>>>,
+    env_refs: Option<&FlowEnvRefs<'_>>,
     // Neither this flow nor any ancestor defines `flow_env`.
     no_flow_env: bool,
     db: &sqlx::Pool<sqlx::Postgres>,
@@ -3513,6 +3704,22 @@ async fn push_next_flow_job(
     };
 
     // tracing::error!("status_module: {status_module:#?}");
+
+    // A flow cancelled by its timeout goes to its failure module from whatever step it was at,
+    // a loop or an approval included, never to a next step, iteration or retry.
+    if step_failure == StepFailureKind::FlowTimeout && !matches!(step, Step::FailureStep) {
+        status_module = FlowStatusModule::Failure {
+            id: status_module.id(),
+            job: Uuid::nil(),
+            flow_jobs: None,
+            flow_jobs_success: None,
+            flow_jobs_duration: None,
+            branch_chosen: None,
+            failed_retries: vec![],
+            agent_actions: None,
+            agent_actions_success: None,
+        };
+    }
 
     let fj: mappable_rc::Marc<MiniPulledJob> = flow_job.clone().into();
     let arc_flow_job_args: Marc<HashMap<String, Box<RawValue>>> =
@@ -3838,16 +4045,23 @@ async fn push_next_flow_job(
 
                     resume_messages.push(to_raw_value(&js));
                     audit_log(
-                         &mut *tx,
-                         &audit_author,
-                         "jobs.suspend_resume",
-                         ActionKind::Update,
-                         &flow_job.workspace_id,
-                         Some(&serde_json::json!({"approved": false, "job_id": flow_job.id, "details": "Suspend timed out without approval but can continue".to_string()}).to_string()),
-                         None,
-                     )
-                     .warn_after_seconds(3)
-                     .await?;
+                        &mut *tx,
+                        &audit_author,
+                        "jobs.suspend_resume",
+                        ActionKind::Update,
+                        &flow_job.workspace_id,
+                        flow_job.runnable_path.as_deref(),
+                        Some(HashMap::from([
+                            ("approved", "false"),
+                            ("job_id", flow_job.id.to_string().as_str()),
+                            (
+                                "details",
+                                "Suspend timed out without approval but can continue",
+                            ),
+                        ])),
+                    )
+                    .warn_after_seconds(3)
+                    .await?;
                 }
 
                 sqlx::query!(
@@ -3932,16 +4146,23 @@ async fn push_next_flow_job(
             } else {
                 if is_disapproved.is_none() {
                     audit_log(
-                         &mut *tx,
-                         &audit_author,
-                         "jobs.suspend_resume",
-                         ActionKind::Update,
-                         &flow_job.workspace_id,
-                         Some(&serde_json::json!({"approved": false, "job_id": flow_job.id, "details": "Suspend timed out without approval and is cancelled".to_string()}).to_string()),
-                         None,
-                     )
-                     .warn_after_seconds(3)
-                     .await?;
+                        &mut *tx,
+                        &audit_author,
+                        "jobs.suspend_resume",
+                        ActionKind::Update,
+                        &flow_job.workspace_id,
+                        flow_job.runnable_path.as_deref(),
+                        Some(HashMap::from([
+                            ("approved", "false"),
+                            ("job_id", flow_job.id.to_string().as_str()),
+                            (
+                                "details",
+                                "Suspend timed out without approval and is cancelled",
+                            ),
+                        ])),
+                    )
+                    .warn_after_seconds(3)
+                    .await?;
                 }
                 tx.commit().warn_after_seconds(3).await?;
 
@@ -4296,6 +4517,8 @@ async fn push_next_flow_job(
                 transform_input(
                     arc_flow_job_args.clone(),
                     flow_env,
+                    env_refs,
+                    module.is_flow(),
                     arc_last_job_result.clone(),
                     input_transforms,
                     resumes.clone(),
@@ -4539,6 +4762,9 @@ async fn push_next_flow_job(
                     let ti = transform_input(
                         args,
                         flow_env,
+                        env_refs,
+                        // A `flow` module is never a simple loop body.
+                        false,
                         arc_last_job_result.clone(),
                         input_transforms,
                         resumes.clone(),
@@ -4594,6 +4820,8 @@ async fn push_next_flow_job(
                         let ti = transform_input(
                             Marc::new(hm),
                             flow_env,
+                            env_refs,
+                            false,
                             arc_last_job_result.clone(),
                             input_transforms,
                             resumes.clone(),
@@ -5535,7 +5763,7 @@ async fn compute_next_flow_transform(
     if module.mock.is_some() && module.mock.as_ref().unwrap().enabled {
         return Ok(NextFlowTransform::Continue(
             ContinuePayload::SingleJob(JobPayloadWithTag {
-                payload: JobPayload::Identity,
+                payload: JobPayload::Identity { mocked: true, skipped: false },
                 tag: None,
                 delete_after_use: false,
                 delete_after_secs: None,
@@ -5563,11 +5791,13 @@ async fn compute_next_flow_transform(
 
     tracing::debug!(id = %flow_job.id, "computing next flow transform for {:?}", &module.value);
     if is_skipped {
-        return trivial_next_job(JobPayload::Identity);
+        return trivial_next_job(JobPayload::Identity { mocked: false, skipped: true });
     }
 
     match module.get_value()? {
-        FlowModuleValue::Identity => trivial_next_job(JobPayload::Identity),
+        FlowModuleValue::Identity => {
+            trivial_next_job(JobPayload::Identity { mocked: false, skipped: false })
+        }
         FlowModuleValue::Flow { path, .. } => {
             let mut payload = flow_to_payload(
                 path,
@@ -6166,6 +6396,7 @@ pub(super) fn is_simple_modules(
         && modules[0].suspend.is_none()
         && modules[0].cache_ttl.is_none()
         && modules[0].retry.is_none()
+        && modules[0].timeout.is_none()
         && modules[0].stop_after_if.is_none()
         && modules[0].stop_after_all_iters_if.is_none()
         && modules[0].skip_if.is_none()
@@ -6485,6 +6716,23 @@ async fn flow_to_payload(
     })
 }
 
+/// Whether the timeout sweep cancelled this flow itself, rather than an ancestor whose cancel
+/// reached it: the ancestor's parent-to-child cancel leaves the parent cancelled too.
+async fn cancelled_by_own_timeout(db: &DB, flow_job: &MiniPulledJob) -> error::Result<bool> {
+    if flow_job.canceled_by.as_deref() != Some(windmill_common::jobs::FLOW_TIMEOUT_CANCELER) {
+        return Ok(false);
+    }
+    let Some(parent) = flow_job.parent_job else {
+        return Ok(true);
+    };
+    let parent_canceled_by =
+        sqlx::query_scalar!("SELECT canceled_by FROM v2_job_queue WHERE id = $1", parent)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+    Ok(parent_canceled_by.as_deref() != Some(windmill_common::jobs::FLOW_TIMEOUT_CANCELER))
+}
+
 /// Effective timeout for a flow step given the module's (already-evaluated) timeout override and
 /// the timeout inherited from the referenced runnable. A `<= 0` override — or none — means "no
 /// override": fall back to the inherited value (which is itself `None` when unset, i.e. the
@@ -6519,7 +6767,7 @@ pub async fn script_to_payload(
                     None,
                     db.clone(),
                     &flow_job.workspace_id,
-                    Some(true),
+                    Some(!apply_preprocessor.unwrap_or(false)),
                 )
                 .await?;
             (
@@ -6710,8 +6958,65 @@ pub async fn get_previous_job_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_flow_step_timeout, extract_chat_message_from_flow_result};
+    use super::{
+        effective_flow_step_timeout, extract_chat_message_from_flow_result, is_simple_modules,
+        FlowEnvSecrets,
+    };
+
+    // An input computed from a secret is stored encrypted, which an agent worker cannot
+    // decrypt, so a key that merely shares a secret entry's name must not count as reading it.
+    #[test]
+    fn reads_secret_only_through_a_flow_env_access() {
+        let refs = FlowEnvSecrets {
+            entries: [(
+                "token".to_string(),
+                to_raw_value(&json!("$var:u/x/t")).unwrap(),
+            )]
+            .into(),
+            crypt: None,
+        };
+        for expr in [
+            "flow_env.token",
+            "\"Bearer \" + flow_env.token",
+            "`${flow_env?.token}`",
+            "flow_env[\"token\"] + 'x'",
+            "flow_env['token']",
+        ] {
+            assert!(refs.reads_secret(expr), "{expr}");
+        }
+        for expr in [
+            "flow_env.BASE + results.login.token",
+            "flow_env.tokens",
+            "flow_input.token",
+            "my_flow_env.token",
+            "flow_env[\"tokens\"]",
+        ] {
+            assert!(!refs.reads_secret(expr), "{expr}");
+        }
+    }
     use serde_json::{json, value::to_raw_value};
+    use windmill_common::flows::FlowModule;
+
+    // The simple-loop fast path reads step settings off the loop module, so a loop body whose
+    // step has its own timeout must take the full path or that timeout is dropped.
+    #[test]
+    fn loop_body_with_step_timeout_is_not_simple() {
+        let step = |extra: serde_json::Value| -> FlowModule {
+            let mut m = json!({
+                "id": "b",
+                "value": {"type": "rawscript", "language": "python3", "content": "", "input_transforms": {}}
+            });
+            m.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value(m).unwrap()
+        };
+        assert!(is_simple_modules(&vec![step(json!({}))], None));
+        assert!(!is_simple_modules(
+            &vec![step(json!({"timeout": {"type": "static", "value": 300}}))],
+            None
+        ));
+    }
 
     // A `<= 0` step timeout override must behave as "no override" and inherit the referenced
     // script's timeout, not collapse to a 0-second (instant-kill) timeout. A positive override

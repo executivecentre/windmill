@@ -12,8 +12,9 @@ use windmill_api_auth::{
 };
 use windmill_api_users::users::WorkspaceInvite;
 use windmill_common::email_oss::send_email_if_possible;
+use windmill_common::runnable_ref::RunnableRef;
 use windmill_common::ssrf::{validate_webhook_url, webhook_ssrf_error_message};
-use windmill_common::usernames::{get_instance_username_or_create_pending, VALID_USERNAME};
+use windmill_common::usernames::{get_instance_username_or_create_pending, validate_username};
 use windmill_common::webhook::WebhookShared;
 use windmill_common::{BASE_URL, DB};
 use windmill_dep_map::lock_hash::record_lock_hashes_for_workspace;
@@ -77,7 +78,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Postgres, Row, Transaction};
 use windmill_common::oauth2::InstanceEvent;
 use windmill_common::secret_backend::{
-    get_secret_backend, is_external_stored_value, is_vault_backend_configured,
+    get_secret_backend, is_external_ref_value, is_external_stored_value,
+    is_vault_backend_configured,
 };
 use windmill_common::utils::not_found_if_none;
 
@@ -163,7 +165,6 @@ pub fn workspaced_service() -> Router {
         )
         .route("/edit_deploy_ui_config", post(edit_deploy_ui_config))
         .route("/edit_default_app", post(edit_default_app))
-        .route("/edit_guest_access", post(edit_guest_access))
         .route(
             "/edit_add_admins_and_developers_to_forks",
             post(edit_add_admins_and_developers_to_forks),
@@ -350,13 +351,10 @@ pub struct WorkspaceSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_app_execution_limit_per_minute: Option<i32>,
     pub error_handler_fallback_to_instance_alerts: bool,
-    /// Whether this workspace admits guest sessions (`ExecutionMode::Guest`). An app's
-    /// own `execution_mode: guest` is inert while this is off.
-    pub guest_access_enabled: bool,
     /// The key a guest JWT is verified against: a PEM public key, or a JWKS URL, at most
     /// one (a DB CHECK enforces it). Public material, not a secret, so it is admin-
     /// readable here. `None`/`None` falls back to the instance issuer (`JWT_EXT_JWKS_URL`)
-    /// off cloud, or accepts no JWT guest if none is set; `guest_access_enabled` is the switch.
+    /// off cloud, or accepts no JWT guest if none is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guest_jwt_public_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -384,9 +382,6 @@ pub struct WorkspacePublicSettings {
     pub teams_team_guid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mute_critical_alerts: Option<bool>,
-    /// Not sensitive, and the app editor needs it to say whether the guest rung is
-    /// live -- an app can be set to `guest` while the workspace has guests off.
-    pub guest_access_enabled: bool,
     /// Read by the fork dialog, which tells the forker who else the fork will include.
     pub add_admins_and_developers_to_forks: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1153,6 +1148,8 @@ async fn reject_parent_only_git_sync_settings_on_fork<'a>(
             Some("Promotion mode")
         } else if r.fork_open_prs {
             Some("Opening PRs for fork deploys")
+        } else if r.ai_review_prs {
+            Some("Reviewing pull requests with AI")
         } else {
             None
         }
@@ -1212,7 +1209,6 @@ async fn get_settings(
             variable_expiration_handler,
             public_app_execution_limit_per_minute,
             error_handler_fallback_to_instance_alerts,
-            guest_access_enabled,
             guest_jwt_public_key,
             guest_jwt_jwks_url,
             add_admins_and_developers_to_forks
@@ -1256,7 +1252,6 @@ async fn get_public_settings(
             teams_team_name,
             teams_team_guid,
             mute_critical_alerts,
-            guest_access_enabled,
             add_admins_and_developers_to_forks,
             deploy_ui,
             large_file_storage,
@@ -1728,8 +1723,10 @@ async fn run_slack_message_test_job(
     Json(req): Json<RunSlackMessageTestJobRequest>,
 ) -> JsonResult<RunSlackMessageTestJobResponse> {
     // Runs as the error handler identity, handed the Slack bot token.
-    if !(windmill_queue::is_preset_handler_path(&req.hub_script_path)
-        && req.hub_script_path.ends_with("-slack"))
+    let handler = RunnableRef::from_path(&req.hub_script_path, false)?;
+    if !handler
+        .preset_handler()
+        .is_some_and(|p| p.ends_with("-slack"))
     {
         return Err(Error::BadRequest(
             "Only a preset Slack handler from the hub can be tested".to_string(),
@@ -1753,7 +1750,7 @@ async fn run_slack_message_test_job(
         Some("slack_message_test".to_string()),
         false,
         w_id.as_str(),
-        &format!("script/{}", req.hub_script_path.as_str()),
+        &handler,
         sqlx::types::Json(&fake_result),
         None,
         Some(Utc::now()),
@@ -3370,6 +3367,18 @@ pub(crate) async fn resolve_pg_source_checked_with_kind(
     // comes through this function, and `validate_dbname` only ever reaches a target. The check is
     // deliberately the narrow one — see `validate_dbname_not_option_like`.
     windmill_common::validate_dbname_not_option_like(&pg.dbname)?;
+    // A token mode authenticates as the API server's own cloud identity. An admin chose to back a
+    // data table with its resource; a `$res:` source only needs to be readable by the caller, so
+    // it must not borrow that identity at all.
+    if source.starts_with("$res:")
+        && windmill_common::PgAuthMode::of(&pg)? != windmill_common::PgAuthMode::Password
+    {
+        return Err(Error::BadRequest(
+            "IAM and Azure workload identity authentication are only available to data tables \
+             here, not to a resource source"
+                .to_string(),
+        ));
+    }
     Ok((pg, managed_kind))
 }
 
@@ -3459,6 +3468,19 @@ pub(crate) struct PgDumpOptions<'a> {
     pub(crate) no_acl: bool,
 }
 
+/// The CLIs are handed the resource's password as is, so a token mode would reach the server as
+/// the literal sentinel. Minting the token for them is not supported.
+fn ensure_cli_password_auth(pg_db: &PgDatabase) -> Result<()> {
+    match windmill_common::PgAuthMode::of(pg_db)? {
+        windmill_common::PgAuthMode::Password => Ok(()),
+        _ => Err(Error::BadRequest(
+            "Copying, importing and exporting a database are not supported with IAM or Azure \
+             workload identity authentication"
+                .to_string(),
+        )),
+    }
+}
+
 /// A pg_dump invocation against `pg_db` writing to `dump_path`, carrying the connection settings
 /// the CLI reads from the environment. The returned file, when there is one, holds the root
 /// certificate the command points at and must outlive it.
@@ -3467,6 +3489,7 @@ fn pg_dump_command(
     opts: PgDumpOptions<'_>,
     dump_path: &std::path::Path,
 ) -> Result<(tokio::process::Command, Option<DumpFile>)> {
+    ensure_cli_password_auth(pg_db)?;
     let host = &pg_db.host;
     let port = pg_db.port.unwrap_or(5432).to_string();
     let user = pg_db.login_name();
@@ -3633,6 +3656,7 @@ async fn comment_out_unsupported_settings(
 /// A psql invocation against `pg_db`, carrying the connection settings the CLI reads
 /// from the environment.
 fn psql_command(pg_db: &PgDatabase) -> Result<(tokio::process::Command, Option<DumpFile>)> {
+    ensure_cli_password_auth(pg_db)?;
     let mut cmd = tokio::process::Command::new("psql");
     cmd.arg("--host")
         .arg(&pg_db.host)
@@ -4060,6 +4084,9 @@ async fn create_pg_database(
     } else {
         let source_pg =
             resolve_pg_source_checked(&db, &user_db, &authed, &w_id, &req.source).await?;
+        // The import that fills this database refuses a token-mode source, and would leave the
+        // database behind empty.
+        ensure_cli_password_auth(&source_pg)?;
         create_database_on_server(&db, &source_pg, &req.target_dbname).await?;
     }
 
@@ -5946,53 +5973,6 @@ async fn edit_default_app(
 }
 
 #[derive(Deserialize)]
-struct EditGuestAccess {
-    guest_access_enabled: bool,
-}
-
-/// Turn guest sessions on or off for this workspace. Off by default, and off is
-/// authoritative and immediate: the switch is re-read where a guest session is
-/// minted (`guest_app_admits`) and at the auth door on every guest request, so an app
-/// whose policy already says `guest` — pushed by git-sync, say — closes to guests on
-/// the next request, sessions already issued included.
-async fn edit_guest_access(
-    authed: ApiAuthed,
-    Extension(db): Extension<DB>,
-    Path(w_id): Path<String>,
-    Json(EditGuestAccess { guest_access_enabled }): Json<EditGuestAccess>,
-) -> Result<String> {
-    require_admin(authed.is_admin, &authed.username)?;
-    if guest_access_enabled {
-        windmill_common::workspaces::require_guest_support()?;
-    }
-
-    let mut tx = db.begin().await?;
-    sqlx::query!(
-        "UPDATE workspace_settings SET guest_access_enabled = $1 WHERE workspace_id = $2",
-        guest_access_enabled,
-        &w_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    audit_log(
-        &mut *tx,
-        &authed,
-        "workspaces.edit_guest_access",
-        ActionKind::Update,
-        &w_id,
-        Some(&guest_access_enabled.to_string()),
-        None,
-    )
-    .await?;
-    tx.commit().await?;
-
-    Ok(format!(
-        "Guest access set to {guest_access_enabled} for workspace {w_id}"
-    ))
-}
-
-#[derive(Deserialize)]
 struct EditAddAdminsAndDevelopersToForks {
     add_admins_and_developers_to_forks: bool,
 }
@@ -6037,13 +6017,13 @@ async fn edit_add_admins_and_developers_to_forks(
 struct EditGuestJwtKey {
     /// A PEM public key (RS or ES family), or a JWKS URL, at most one. Both empty clears the
     /// workspace key; verification then falls back to the instance issuer (`JWT_EXT_JWKS_URL`)
-    /// off cloud, or refuses the JWT if none is set. The off-switch is `guest_access_enabled`.
+    /// off cloud, or refuses the JWT if none is set.
     public_key: Option<String>,
     jwks_url: Option<String>,
 }
 
 /// Configure the key a guest JWT (`jwt_guest_`) is verified against for this workspace.
-/// Workspace-admin gated, like the guest switch: guests are free up to the instance
+/// Workspace-admin gated: guests are free up to the instance
 /// allowance on any plan, so configuring their key needs no licence. The key is
 /// validated before it is stored so a typo is refused here, not silently on every guest
 /// later: a PEM must parse as an RS/ES public key (HS* has no PEM form and is
@@ -6441,30 +6421,28 @@ async fn edit_variable_expiration_handler(
             ));
         }
 
-        // Any hub script is left unchecked, so saving never needs the hub.
-        let exists = if let Some(p) = path.strip_prefix("script/") {
-            p.starts_with("hub/")
+        // Any hub script is left unchecked, so saving never needs the hub. A hub flow is not
+        // exempt: it is looked up in the workspace like any flow, and so refused.
+        let handler = RunnableRef::from_prefixed(path)?;
+        let exists = if !handler.is_flow() {
+            handler.path().starts_with("hub/")
                 || sqlx::query_scalar!(
                     "SELECT EXISTS(SELECT 1 FROM script WHERE workspace_id = $1 AND path = $2 AND archived = false AND deleted = false)",
                     w_id,
-                    p
+                    handler.path()
                 )
                 .fetch_one(&mut *tx)
                 .await?
                 .unwrap_or(false)
-        } else if let Some(p) = path.strip_prefix("flow/") {
+        } else {
             sqlx::query_scalar!(
                 "SELECT EXISTS(SELECT 1 FROM flow WHERE workspace_id = $1 AND path = $2 AND archived = false)",
                 w_id,
-                p
+                handler.path()
             )
             .fetch_one(&mut *tx)
             .await?
             .unwrap_or(false)
-        } else {
-            return Err(Error::BadRequest(format!(
-                "Field `path` must start with script/ or flow/ (got {path})"
-            )));
         };
         if !exists {
             return Err(Error::BadRequest(format!(
@@ -6474,7 +6452,7 @@ async fn edit_variable_expiration_handler(
 
         // Persisted even when false, like `error_handler`'s.
         let mut variable_expiration_handler = serde_json::json!({
-            "path": path,
+            "path": handler.prefixed(),
             "muted_on_user_path": es.muted_on_user_path,
         });
         if let Some(extra_args) = &es.extra_args {
@@ -6826,7 +6804,9 @@ async fn set_encryption_key(
         .await?;
 
         for variable in all_variables {
-            if !variable.is_secret {
+            if !variable.is_secret
+                || windmill_common::secret_backend::resolves_externally(&variable.value)
+            {
                 continue;
             }
             let decrypted_value =
@@ -7482,8 +7462,11 @@ async fn create_workspace(
         }
         get_instance_username_or_create_pending(&mut tx, &authed.email).await?
     } else {
-        nw.username
-            .ok_or(Error::BadRequest("username is required".to_string()))?
+        let username = nw
+            .username
+            .ok_or(Error::BadRequest("username is required".to_string()))?;
+        validate_username(&username)?;
+        username
     };
 
     sqlx::query!(
@@ -7968,7 +7951,7 @@ async fn update_workspace_settings(
         .filter(|r| !r.use_individual_branch.unwrap_or(false))
         .take(1)
         .map(|mut r| {
-            // Auto-pull and fork PRs are parent-owned and must not be inherited:
+            // Auto-pull, fork PRs and PR reviews are parent-owned and must not be inherited:
             // the fork would otherwise carry the parent's webhook id (turning off
             // auto-pull on the fork would delete the parent's webhook). A fork
             // still inherits the push-direction config, the installation, and the
@@ -7977,6 +7960,7 @@ async fn update_workspace_settings(
             // fork unqualified for managed features until its first check.
             r.auto_pull = None;
             r.fork_open_prs = false;
+            r.ai_review_prs = false;
             r.open_pr_error = None;
             r
         })
@@ -8275,6 +8259,13 @@ async fn clone_variables(
     // exist. Replicate every secret, not just marker-valued ones: migration writes
     // to the store without rewriting `value` to a `$...:` marker.
     if is_vault_backend_configured(db).await? {
+        let backend = get_secret_backend(db).await?;
+        // A read-only store is never written: the fork's references resolve under its own
+        // workspace id, and its database-encrypted secrets came with the rows above.
+        if backend.backend_name() == "http_store" {
+            return Ok(());
+        }
+
         let secret_variables = sqlx::query!(
             "SELECT path FROM variable
              WHERE workspace_id = $1 AND is_secret = true AND value != ''",
@@ -8283,7 +8274,6 @@ async fn clone_variables(
         .fetch_all(&mut **tx)
         .await?;
 
-        let backend = get_secret_backend(db).await?;
         for variable in secret_variables {
             match backend
                 .get_secret(source_workspace_id, &variable.path)
@@ -11321,6 +11311,7 @@ async fn attach_dev_workspace(
                 }
                 r.auto_pull = None;
                 r.fork_open_prs = false;
+                r.ai_review_prs = false;
                 r.open_pr_error = None;
             }
             let serialized =
@@ -12152,11 +12143,7 @@ async fn add_user(
             .username
             .ok_or(Error::BadRequest("username is required".to_string()))?;
 
-        if !VALID_USERNAME.is_match(&username) {
-            return Err(windmill_common::error::Error::BadRequest(format!(
-                "Usermame can only contain alphanumeric characters and underscores and must start with a letter"
-            )));
-        }
+        validate_username(&username)?;
 
         username
     };
@@ -14324,6 +14311,7 @@ async fn load_workspace_authed(
             read_only: base_authed.read_only,
             job_id: base_authed.job_id,
             credential_expiry: base_authed.credential_expiry,
+            mcp_client: base_authed.mcp_client.clone(),
         });
     };
 
@@ -14364,6 +14352,7 @@ async fn load_workspace_authed(
         read_only: base_authed.read_only,
         job_id: base_authed.job_id,
         credential_expiry: base_authed.credential_expiry,
+        mcp_client: base_authed.mcp_client.clone(),
     })
 }
 
@@ -14960,8 +14949,12 @@ async fn compare_two_variables(
         {
             // A secret's ciphertext is randomized on every write, so equal secrets are compared
             // by plaintext, each decrypted with its own workspace's key. An external backend
-            // reference is the same text on both sides but names a per-workspace entry.
+            // reference is the same text on both sides but names a per-workspace entry. An
+            // `$external:` reference is compared as written: two references resolving to equal
+            // values still point at different secrets.
             has_changes = !source.is_secret
+                || is_external_ref_value(&source.value)
+                || is_external_ref_value(&target.value)
                 || !matches!(
                     tokio::try_join!(
                         decrypt_secret_value(db, source_workspace_id, path, source.value.clone()),
@@ -15789,6 +15782,8 @@ pub enum SettingsEdit {
     DefaultApp,
     Color,
     OperatorSettings,
+    /// Body: the workspace's role overrides as a whole, `{ "<role>": { label?, capabilities } }`.
+    RoleOverrides,
     Datatable,
     SlackCommand,
     SetSlackOAuth,
@@ -15796,7 +15791,6 @@ pub enum SettingsEdit {
     Ducklake,
     DbtWarehouses,
     DeployUi,
-    GuestAccess,
     GuestJwtKey,
     PublicAppRateLimit,
     AddAdminsAndDevelopersToForks,
@@ -15854,6 +15848,10 @@ pub async fn apply_settings_edit(
             )
             .await?
         }
+        RoleOverrides => {
+            crate::workspace_roles::update_role_overrides(a, p, d, settings_edit_body(edit, body)?)
+                .await?
+        }
         Datatable => {
             let Json(result) =
                 edit_datatable_config(a, d, p, settings_edit_body(edit, body)?).await?;
@@ -15868,7 +15866,6 @@ pub async fn apply_settings_edit(
         DeployUi => edit_deploy_ui_config(a, d, p, settings_edit_body(edit, body)?).await?,
         #[cfg(not(feature = "enterprise"))]
         DeployUi => edit_deploy_ui_config(a, d, p).await?,
-        GuestAccess => edit_guest_access(a, d, p, settings_edit_body(edit, body)?).await?,
         GuestJwtKey => edit_guest_jwt_key(a, d, p, settings_edit_body(edit, body)?).await?,
         PublicAppRateLimit => {
             edit_public_app_rate_limit(d, p, a, settings_edit_body(edit, body)?).await?

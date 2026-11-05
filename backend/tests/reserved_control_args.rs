@@ -90,6 +90,7 @@ fn trigger_authed() -> windmill_api_auth::ApiAuthed {
         read_only: false,
         job_id: None,
         credential_expiry: None,
+        mcp_client: None,
     }
 }
 
@@ -125,8 +126,7 @@ async fn trigger_args_lose_every_reserved_control_key(db: Pool<Postgres>) -> any
         None,
         trigger_authed(),
         "test-workspace",
-        SCRIPT_PATH,
-        false,
+        &windmill_common::runnable_ref::RunnableRef::from_path(SCRIPT_PATH, false)?,
         args,
         None,
         None,

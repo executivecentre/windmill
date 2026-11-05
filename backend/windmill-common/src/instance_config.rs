@@ -594,6 +594,8 @@ pub struct OAuthClient {
     pub share_with_workspaces: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grant_types: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pkce: Option<bool>,
 
     /// Catch-all for provider-specific fields (e.g. Keycloak `org`, Okta `domain`/`custom`).
     #[serde(flatten)]
@@ -1202,7 +1204,13 @@ const NESTED_SENSITIVE_FIELDS: &[(&str, &[&str])] = &[
     ("smtp_settings", &["smtp_password"]),
     (
         "secret_backend",
-        &["token", "client_secret", "secret_access_key"],
+        &[
+            "token",
+            "client_secret",
+            "secret_access_key",
+            "auth",
+            "extra_headers",
+        ],
     ),
     (
         "object_store_cache_config",
@@ -1235,7 +1243,10 @@ fn mask_nested_sensitive(key: &str, value: &serde_json::Value) -> serde_json::Va
         }
     }
     // Settings that are maps-of-objects where each child has a sensitive sub-field.
-    const NESTED_MAP_SENSITIVE: &[(&str, &[&str])] = &[("oauths", &["secret", "signing_secret"])];
+    const NESTED_MAP_SENSITIVE: &[(&str, &[&str])] = &[
+        ("oauths", &["secret", "signing_secret"]),
+        ("external_secrets", &["token"]),
+    ];
     for &(parent_key, child_fields) in NESTED_MAP_SENSITIVE {
         if key == parent_key {
             if let serde_json::Value::Object(entries) = value {
@@ -1584,6 +1595,10 @@ pub async fn sync_global_settings_declarative(
     let max_expiration_key = crate::global_settings::MAX_TOKEN_EXPIRATION_DAYS_SETTING;
     crate::global_settings::parse_max_token_expiration_days(desired.get(max_expiration_key))
         .map_err(|e| anyhow::anyhow!("{max_expiration_key}: {e}"))?;
+
+    let idp_key = crate::global_settings::MCP_EXTERNAL_IDP_SETTING;
+    crate::global_settings::parse_mcp_external_idp(desired.get(idp_key))
+        .map_err(|e| anyhow::anyhow!("{idp_key}: {e}"))?;
 
     let mut diff = diff_global_settings(current, desired, ApplyMode::Replace);
     let roles_key = crate::global_settings::WORKSPACE_ROLES_SETTING;
@@ -2956,6 +2971,20 @@ mod tests {
     }
 
     #[test]
+    fn format_setting_value_redacts_http_store_credentials() {
+        let val = serde_json::json!({
+            "type": "HttpStore",
+            "base_url": "https://store.example",
+            "auth": {"type": "StaticHeader", "header_name": "X-Key", "header_value": "store-api-key-12345"},
+            "extra_headers": {"X-Tenant-Key": "tenant-key-67890"}
+        });
+        let formatted = format_setting_value("secret_backend", &val);
+        assert!(!formatted.contains("store-api-key-12345"));
+        assert!(!formatted.contains("tenant-key-67890"));
+        assert!(formatted.contains("store.example"));
+    }
+
+    #[test]
     #[should_panic(expected = "literal_value() called on unresolved secret ref")]
     fn string_or_secret_ref_literal_value_panics_on_ref() {
         let v = StringOrSecretRef::SecretRef(SecretKeyRefWrapper {
@@ -3133,6 +3162,7 @@ mod tests {
                         tenant: None,
                         share_with_workspaces: None,
                         grant_types: vec![],
+                        pkce: None,
                         extra: BTreeMap::new(),
                     }),
                 );

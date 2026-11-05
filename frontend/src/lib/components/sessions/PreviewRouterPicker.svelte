@@ -39,7 +39,6 @@ section or the flat layout.
 		getGlobalDraftStoragePath,
 		listGlobalDrafts
 	} from '$lib/components/copilot/chat/global/userDraftAdapter'
-	import { isGlobalAiEnabled } from '$lib/components/copilot/chat/global/gate'
 	import type { PersistedArtifact } from '$lib/components/copilot/chat/artifacts/artifactsDB'
 	import {
 		PREVIEW_PAGES,
@@ -76,10 +75,13 @@ section or the flat layout.
 		workspaceId?: string
 		// Session artifacts to surface as an "Artifacts" branch; omitted or empty
 		// hides the branch (non-session consumers, sessions without artifacts).
-		artifacts?: PersistedArtifact[]
+		artifacts?: Pick<PersistedArtifact, 'id' | 'name'>[]
 		/** The session chat, whose Use mode opens items in their viewer. Read from the
 		 * `aiChatManager` context when omitted. */
 		chat?: { readonly workMode: AIWorkMode }
+		/** Where picking a target navigates, for a host whose pick is a navigation; rows then
+		 * open in a new tab on middle and ⌘/Ctrl-click. */
+		targetHref?: (target: PreviewTarget) => string | undefined
 	}
 
 	let {
@@ -92,7 +94,8 @@ section or the flat layout.
 		flush = false,
 		workspaceId,
 		artifacts,
-		chat
+		chat,
+		targetHref
 	}: Props = $props()
 
 	const kinds: Kind[] = ['flow', 'script', 'app']
@@ -130,8 +133,8 @@ section or the flat layout.
 	// chat-scaffolded items are navigable (see WorkspaceItemDrillPicker).
 	const KIND_TO_DRAFT_TYPE = { flow: 'flow', script: 'script', app: 'app' } as const
 	const globalDraftsResource = resource(
-		() => ({ ws: effectiveWorkspace, enabled: isGlobalAiEnabled() }),
-		async ({ ws, enabled }) => (enabled && ws ? await listGlobalDrafts(ws) : [])
+		() => effectiveWorkspace,
+		async (ws) => (ws ? await listGlobalDrafts(ws) : [])
 	)
 	function aiDraftsForKind(k: Kind): WorkspaceItem[] {
 		const targetType = KIND_TO_DRAFT_TYPE[k]
@@ -168,19 +171,33 @@ section or the flat layout.
 	// saying "show me this", so it lands on the deployed page, and `navigate`
 	// would otherwise keep whichever side the re-pointed tab happened to be on.
 	// A draft-only item opens its editor, unless this user cannot save there.
+	function itemTarget(item: WorkspaceItem): PreviewTarget {
+		return { type: 'item', item, mode: canEdit(item) ? previewModeFor(item) : 'view' }
+	}
 	function tagItems(nodes: DrillNode<WorkspaceItem>[]): DrillNode<PreviewTarget>[] {
 		return nodes.map((n) =>
 			n.type === 'leaf'
-				? {
-						...n,
-						data: {
-							type: 'item',
-							item: n.data,
-							mode: canEdit(n.data) ? previewModeFor(n.data) : 'view'
-						}
-					}
+				? { ...n, data: itemTarget(n.data) }
 				: { ...n, children: tagItems(n.children) }
 		)
+	}
+
+	// The mode is saved with the tab and never re-checked, and `canEdit` refuses until the
+	// rights and protection rules arrive: a draft-only item picked before then would open in a
+	// viewer that has nothing to show. Hold the pick until both have answered.
+	let heldItem = $state<WorkspaceItem | undefined>(undefined)
+	$effect(() => {
+		if (!heldItem || !permissions.settled) return
+		const item = heldItem
+		heldItem = undefined
+		untrack(() => onPick(itemTarget(item)))
+	})
+	function pick(target: PreviewTarget) {
+		if (target.type === 'item' && target.item.draftOnly && !permissions.settled) {
+			heldItem = target.item
+		} else {
+			onPick(target)
+		}
 	}
 
 	// Open the item's editor. Offered on every item row this user can edit, including the
@@ -392,7 +409,7 @@ section or the flat layout.
 <DrillPicker
 	bind:this={inner}
 	{tree}
-	onPick={(leaf) => onPick(leaf.data)}
+	onPick={(leaf) => pick(leaf.data)}
 	initialScope={computedInitialScope}
 	{initialHighlight}
 	{externalFilter}
@@ -410,5 +427,6 @@ section or the flat layout.
 	onFilterChange={loader.onFilterChange}
 	leafAction={editAction}
 	leafBadge={stateBadge}
+	leafHref={targetHref ? (leaf) => targetHref(leaf.data) : undefined}
 	{rootLoading}
 />

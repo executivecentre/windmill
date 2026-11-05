@@ -109,8 +109,8 @@ export function escapeHtml(unsafe: string) {
 }
 
 export function validateUsername(username: string): string {
-	if (username != '' && !/^[a-zA-Z]\w+$/.test(username)) {
-		return 'username can only contain letters and numbers and must start with a letter'
+	if (username != '' && !/^\w{1,50}$/.test(username)) {
+		return 'Username can only contain letters, numbers and underscores (at most 50)'
 	} else {
 		return ''
 	}
@@ -1672,6 +1672,9 @@ export type Item = {
 	 * slot. Presentational: the row's own click is what flips it, so `action` must
 	 * apply the change. */
 	toggle?: boolean
+	/** The menu stays open after the row is picked, for a setting whose effect shows in it.
+	 * Rows of a `DropdownSubmenuItem` only. */
+	keepOpen?: boolean
 	submenuItems?: Item[]
 	shortcut?: string
 	// Renders a trailing check on the right of the label to mark the
