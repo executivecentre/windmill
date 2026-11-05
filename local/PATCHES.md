@@ -6,6 +6,7 @@ This branch, `feature/custom-unlimited`, is Windmill's open-source code with a f
 - SSO sign-in (Microsoft and the other providers of Instance settings → SSO), which the
   open-source code leaves as a stub;
 - user creation and password changes, also stubs;
+- workspace auto-add and auto-invite of instance accounts, also a stub;
 - no credentials in the request log;
 - Cargo's version where the build cannot describe a release tag, so version-gated features stay
   on.
@@ -24,7 +25,8 @@ Upstream commit `a72484b2aaeccbd5a2d19e71ee75d21494ea74f4` (`chore(main): releas
 - Image: upstream's `Dockerfile` with `--build-arg features=oss_core,all_languages,jemalloc`.
 - From `backend/`, with `DATABASE_URL` naming a Postgres in which the tests may create databases:
   `cargo test -p windmill-api-integration-tests --test oss_sso_login --test oss_user_management
-  --test users --test login_link`, and `cargo test -p windmill-api-workspaces --lib redacted_uri`.
+  --test oss_auto_invite --test users --test login_link --test workspaces`, and
+  `cargo test -p windmill-api-workspaces --lib redacted_uri`.
 - From `frontend/`: `npm run check` and `npx vitest run src/lib/components/sessions/`.
 
 ## Upgrading to a newer upstream release
@@ -123,6 +125,16 @@ Windmill's migrations only move forward: back up the database before a new relea
 - **Re-apply**: re-add the declaration and the three one-line delegations. If upstream changes a
   stub's signature, change the matching function in `users_oss_local.rs`.
 
+### `backend/windmill-api-workspaces/src/workspaces_oss.rs`
+
+- **Change**: the stub `edit_auto_invite`, which returned "Not implemented on OSS", delegates to
+  `workspaces_oss_local.rs`, declared `pub mod local` so that account creation in `windmill-api`
+  can call its `join_auto_invite_workspaces`.
+- **Reason**: without it, Workspace settings → Users cannot switch on auto-add or auto-invite. The
+  official images get both from Enterprise code.
+- **Re-apply**: re-add the declaration and the one-line delegation. If upstream changes the stub's
+  signature or `EditAutoInvite`, change `workspaces_oss_local.rs` to match.
+
 ### `backend/windmill-api-workspaces/src/remote_deploy.rs`
 
 - **Change**: `RedactedUri`, which formats every request URI the server logs
@@ -164,11 +176,25 @@ compile.
   the SSO tab's "Send PKCE" toggle, switched on for a new provider, has no effect in this build,
   and a provider that requires PKCE cannot sign users in.
 - `backend/windmill-api/src/users_oss_local.rs`: user creation, password changes (Argon2id) and
-  the account insertion SSO sign-in shares.
+  the account insertion SSO sign-in shares, which also joins each new account to the workspaces
+  that auto-add or auto-invite it.
+- `backend/windmill-api-workspaces/src/workspaces_oss_local.rs`: workspace auto-add and
+  auto-invite. The setting is `workspace_settings.auto_invite` in the shape the frontend reads
+  (`enabled`, `domain`, `operator`, `role`, `mode`), beside the Enterprise instance-group keys,
+  which every write keeps. Switching it on applies it to the existing accounts: all of them for
+  "anyone joining the instance" (`domain` `*`), else those of the admin's e-mail domain. Every
+  account created afterwards, by an admin or by a first SSO sign-in, joins in the transaction that
+  creates it, with `added_via` `{"source": "domain"}` (the UI's "Auto-add" badge). A workspace
+  whose setting cannot be applied, such as one naming a deleted role, is skipped with a warning
+  and never fails the account's creation. Auto-add needs instance-wide usernames (automated
+  username creation, on by default), and sends no `UserAddedWorkspace` instance event, which a
+  manual add sends.
 - `backend/windmill-api-integration-tests/tests/oss_sso_login.rs`: SSO sign-in against a mock
   provider.
 - `backend/windmill-api-integration-tests/tests/oss_user_management.rs`: user creation and
   password changes.
+- `backend/windmill-api-integration-tests/tests/oss_auto_invite.rs`: auto-add and auto-invite,
+  with the request bodies the frontend sends.
 
 ## Checking the patch set
 

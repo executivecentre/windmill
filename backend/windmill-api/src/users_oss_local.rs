@@ -123,7 +123,8 @@ pub(super) async fn create_user(
 }
 
 /// Inserts the `password` row of a new instance account, with a generated username unless
-/// the instance turned that off. Also used by SSO sign-in to create first-time users.
+/// the instance turned that off, and joins it to the workspaces that auto-add or auto-invite
+/// it. Also used by SSO sign-in to create first-time users.
 pub(crate) async fn insert_account(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     email: &str,
@@ -185,7 +186,7 @@ pub(crate) async fn insert_account(
         .execute(&mut **tx)
         .await?;
 
-    Ok(())
+    windmill_api_workspaces::workspaces_oss::local::join_auto_invite_workspaces(tx, email).await
 }
 
 pub(super) async fn set_password(
