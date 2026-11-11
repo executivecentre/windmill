@@ -74,7 +74,8 @@
 	import { registerToolDisplayActionHandler } from '$lib/components/copilot/chat/createdResourceActions.svelte'
 	import type UserSettings from '$lib/components/UserSettings.svelte'
 	import type SuperadminSettings from '$lib/components/SuperadminSettings.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
+	import { BRAND_NAME } from '$lib/branding'
 	import { page } from '$app/state'
 	import {
 		favoriteManager,
@@ -1309,7 +1310,7 @@ console links it: shared pages (public apps, public runs, shared sessions, appro
 outside this layout, and their shortcut must reopen the URL that is their credential. -->
 <svelte:head>
 	<link rel="manifest" href="/manifest.webmanifest" />
-	<meta name="apple-mobile-web-app-title" content="Windmill" />
+	<meta name="apple-mobile-web-app-title" content={BRAND_NAME} />
 </svelte:head>
 
 <!-- Runs lifted to the top of the workspace nav. Excluded from SidebarContent (via
@@ -1416,7 +1417,7 @@ outside this layout, and their shortcut must reopen the URL that is their creden
 				<!-- The brand is the way home, so it stands in for a Home icon and label. -->
 				<MenuLink
 					class="!text-xs"
-					label={($whitelabelNameStore ? capitalize($whitelabelNameStore) : 'Windmill') +
+					label={($whitelabelNameStore ? capitalize($whitelabelNameStore) : BRAND_NAME) +
 						(homeRowLearned.val ? '' : ' / Home')}
 					hint="Go to Home"
 					href="/"
@@ -1424,7 +1425,7 @@ outside this layout, and their shortcut must reopen the URL that is their creden
 						// A click on Home itself goes nowhere, so it teaches nothing.
 						if (page.url.pathname !== '/') homeRowLearned.val = true
 					}}
-					icon={WindmillIcon}
+					icon={BrandIcon}
 					iconProps={{ white: darkMode, width: '16px', height: '16px' }}
 					hoverIcon={House}
 					hoverLabel="Home"

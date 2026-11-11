@@ -1,0 +1,8 @@
+# Local files of earlier deployments (secrets, backups, source archives); never commit them.
+/dist/
+/.env
+/secrets/
+/backups/
+/group-mappings.yaml
+/certs/
+/test/

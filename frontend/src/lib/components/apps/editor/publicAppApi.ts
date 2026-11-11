@@ -65,7 +65,7 @@ export async function getUserExtOrUndefined(workspace: string): Promise<UserExt 
 	}
 }
 
-/** Only fades the "Powered by" badge, so a failure is not worth surfacing. */
+/** Only lets a low-code app's custom CSS apply, so a failure is not worth surfacing. */
 export async function getLicenseOrUndefined(): Promise<string | undefined> {
 	try {
 		return (await publicGet<string>('/ee_license')) || undefined
