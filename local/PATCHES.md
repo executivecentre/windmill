@@ -9,7 +9,9 @@ This branch, `feature/custom-unlimited`, is Windmill's open-source code with a f
 - workspace auto-add and auto-invite of instance accounts, also a stub;
 - no credentials in the request log;
 - Cargo's version where the build cannot describe a release tag, so version-gated features stay
-  on.
+  on;
+- AI Portal branding: its mark as the favicon and on the sidebar and login page, "AI Portal" as
+  the name there and in page titles, and no "Powered by Windmill" badge on shared apps.
 
 It is built from Community Edition code only, with the cargo features
 `oss_core,all_languages,jemalloc` (never `private`, `enterprise`, `no_auth` or `oss`), and uses no
@@ -104,6 +106,85 @@ Windmill's migrations only move forward: back up the database before a new relea
   sign-in of `oauth2_oss_local.rs`.
 - **Re-apply**: remove the notice again.
 
+### `frontend/static/logo.svg`
+
+- **Change**: the brand mark (`BRAND_MARK_PATH` of `src/lib/branding.ts`) in `BRAND_COLOR`, white
+  under a dark colour scheme, instead of Windmill's.
+- **Reason**: the favicon (`app.html`, `favicon.ts`). It is also the manifest's SVG icon and the
+  default source of a new low-code image component. A static file cannot import `branding.ts`,
+  so this copy changes with it.
+- **Re-apply**: overwrite upstream's file with this one.
+
+### `frontend/src/lib/favicon.ts`
+
+- **Change**: the status favicon of a run page draws the brand mark (`LOGO_MARK`, built from
+  `branding.ts` and scaled to the 256-unit canvas, white under a dark colour scheme) instead of
+  Windmill's polygons.
+- **Reason**: otherwise a run page swaps the favicon back to Windmill's mark.
+- **Re-apply**: replace whatever inlines Windmill's logo with `LOGO_MARK`.
+
+### `frontend/src/routes/(root)/(logged)/+layout.svelte`
+
+- **Change**: the sidebar's brand row (the Home link) shows `BrandIcon` and `BRAND_NAME` instead
+  of `WindmillIcon` and "Windmill" (a whitelabel license name still takes precedence), and
+  `apple-mobile-web-app-title` is `BRAND_NAME`.
+- **Reason**: the console's brand.
+- **Re-apply**: on whatever renders the sidebar brand, swap the icon and the fallback name; set
+  the meta tag again.
+
+### `frontend/src/routes/+layout.svelte`
+
+- **Change**: the default page title ends in `BRAND_NAME` instead of "Windmill".
+- **Reason**: the browser tab's title on most pages.
+- **Re-apply**: replace "Windmill" in the `<title>` template.
+
+### `frontend/src/routes/(root)/(logged)/pipeline/+page.svelte`
+
+- **Change**: the `<title>` ends in `BRAND_NAME` instead of "Windmill".
+- **Reason**: this page sets its own tab title.
+- **Re-apply**: as for the root layout.
+
+### `frontend/src/routes/(root)/(logged)/pipeline/[folder]/+page.svelte`
+
+- **Change**: the `<title>` ends in `BRAND_NAME` instead of "Windmill".
+- **Reason**: this page sets its own tab title.
+- **Re-apply**: as for the root layout.
+
+### `frontend/src/routes/(styled)/public_run/[workspace]/[id]/+page.svelte`
+
+- **Change**: the `<title>` ends in `BRAND_NAME` instead of "Windmill".
+- **Reason**: this page sets its own tab title.
+- **Re-apply**: as for the root layout.
+
+### `frontend/src/routes/(root)/(logged)/user/(user)/login/+page.svelte`
+
+- **Change**: the login page's centred mark is `BrandIcon`, spinning slowly, instead of
+  `WindmillIcon`. A whitelabel license name still hides it.
+- **Reason**: the login page's brand.
+- **Re-apply**: swap the icon above the login heading.
+
+### `frontend/src/lib/components/LoginHeading.svelte`
+
+- **Change**: the instance name falls back to `BRAND_NAME` instead of "Windmill", so the heading
+  reads "Log in to AI Portal" ("Log in or sign up to AI Portal" with third-party sign-in).
+- **Reason**: the login page's brand.
+- **Re-apply**: change the fallback name again.
+
+### `frontend/src/lib/components/apps/editor/PublicApp.svelte`
+
+- **Change**: the "Powered by Windmill" badge at the bottom right of shared apps (public, custom
+  path and embed routes) is removed, with the imports only it used and its mention in the props'
+  comments.
+- **Reason**: shared apps carry no Windmill attribution.
+- **Re-apply**: remove the badge again; `license` stays, it still gates a low-code app's custom
+  CSS.
+
+### `frontend/src/lib/components/apps/editor/publicAppApi.ts`
+
+- **Change**: `getLicenseOrUndefined`'s comment no longer mentions the badge.
+- **Reason**: follows the badge's removal.
+- **Re-apply**: drop the badge from the comment.
+
 ### `backend/windmill-api/src/oauth2_oss.rs`
 
 - **Change**: `build_oauth_clients` fills `logins` from `oauth2_oss_local.rs` instead of leaving it
@@ -189,6 +270,12 @@ compile.
   and never fails the account's creation. Auto-add needs instance-wide usernames (automated
   username creation, on by default), and sends no `UserAddedWorkspace` instance event, which a
   manual add sends.
+- `frontend/src/lib/branding.ts`: the brand in one place, `BRAND_NAME`, `BRAND_COLOR` and the
+  mark (`BRAND_MARK_PATH` in a `BRAND_MARK_SIZE` square). Every patched brand spot reads it;
+  `static/logo.svg` repeats the mark and colour. Rebranding means editing these two files.
+- `frontend/src/lib/components/icons/BrandIcon.svelte`: the brand mark as an inline SVG, in
+  `BRAND_COLOR` under the light theme and white under the dark one, whatever text colour the
+  caller passes. It accepts `WindmillIcon`'s props, `spin` included (off under reduced motion).
 - `backend/windmill-api-integration-tests/tests/oss_sso_login.rs`: SSO sign-in against a mock
   provider.
 - `backend/windmill-api-integration-tests/tests/oss_user_management.rs`: user creation and

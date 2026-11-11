@@ -16,6 +16,7 @@
 	import JobStatus from '$lib/components/JobStatus.svelte'
 	import LogViewer from '$lib/components/LogViewer.svelte'
 	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import { BRAND_NAME } from '$lib/branding'
 
 	// SvelteKit reuses this component across /public_run/* navigations, so every input
 	// derived from the URL has to stay reactive — a captured-once value would leave the
@@ -86,7 +87,7 @@
 </script>
 
 <svelte:head>
-	<title>Run {truncateRev(jobId, 8)} | Windmill</title>
+	<title>Run {truncateRev(jobId, 8)} | {BRAND_NAME}</title>
 	<!-- The URL *is* the credential: keep the link out of search indexes, and out of the
 	     Referer header of anything the rendered result or logs may link to. -->
 	<meta name="robots" content="noindex, nofollow" />
