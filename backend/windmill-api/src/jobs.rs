@@ -56,8 +56,8 @@ use windmill_common::workspace_dependencies::{
     RawWorkspaceDependencies, MIN_VERSION_WORKSPACE_DEPENDENCIES,
 };
 use windmill_common::workspaces::{
-    check_operator_can_build, check_user_against_rule, BuilderKind, ProtectionRuleKind,
-    RuleCheckResult,
+    check_operator_can_build, check_role_can_run, check_user_against_rule, BuilderKind,
+    ProtectionRuleKind, RuleCheckResult,
 };
 use windmill_common::DYNAMIC_INPUT_CACHE;
 #[cfg(all(feature = "enterprise", feature = "instance_smtp"))]
@@ -2700,11 +2700,7 @@ impl<'a> GetQuery<'a> {
             job.raw_flow.take(),
         );
         if self.with_flow {
-            // Try to fetch the flow from the cache, fallback to the preview flow.
-            // NOTE: This could check for the job kinds instead of the `or_else` but it's not
-            // necessary as `fetch_flow` return early if the job kind is not a preview one.
-            cache::job::fetch_flow(db, job.job_kind(), hash)
-                .or_else(|_| cache::job::fetch_preview_flow(db, &id, raw_flow))
+            cache::job::fetch_flow_or_preview(db, job.job_kind(), hash, &id, raw_flow)
                 .await
                 .ok()
                 .inspect(|data| job.raw_flow = Some(sqlx::types::Json(data.raw_flow.clone())));
@@ -5104,6 +5100,7 @@ pub async fn resume_suspended_flow_as_owner(
         job_id,
         true,
         &authed.username,
+        None,
     )
     .await?;
 
@@ -5236,6 +5233,7 @@ async fn resume_suspended(
 
     let approver_value = opt_authed.as_ref().map(|a| a.username.clone());
 
+    let deny_reason = (!approved).then(|| deny_reason(&value)).flatten();
     insert_resume_job(
         resume_id,
         resume_job_id,
@@ -5280,6 +5278,7 @@ async fn resume_suspended(
         resume_job_id,
         approved,
         &approver,
+        deny_reason.as_deref(),
     )
     .await?;
 
@@ -5781,6 +5780,7 @@ async fn resume_suspended_job_internal(
         reject_mismatched_wac_approval(&mut tx, flow_info.id, resume_id).await?;
     }
 
+    let deny_reason = (!approved).then(|| deny_reason(&value)).flatten();
     insert_resume_job(
         resume_id,
         job_id,
@@ -5834,6 +5834,7 @@ async fn resume_suspended_job_internal(
         job_id,
         approved,
         &approver,
+        deny_reason.as_deref(),
     )
     .await?;
     tx.commit().await?;
@@ -5851,6 +5852,7 @@ async fn audit_suspend_resume(
     step_job_id: Uuid,
     approved: bool,
     approver: &str,
+    deny_reason: Option<&str>,
 ) -> error::Result<()> {
     let flow_id_s = flow_id.to_string();
     let step_job_id_s = step_job_id.to_string();
@@ -5866,6 +5868,9 @@ async fn audit_suspend_resume(
     ]);
     if step_job_id != flow_id {
         params.insert("step_job_id", step_job_id_s.as_str());
+    }
+    if let Some(reason) = deny_reason {
+        params.insert("reason", reason);
     }
     audit_log(
         &mut **tx,
@@ -5938,6 +5943,12 @@ async fn decrement_suspend(flow_id: Uuid, tx: &mut Transaction<'_, Postgres>) ->
     Ok(())
 }
 
+/// The reason an approver gave for a denial, read from the deny payload's `reason`.
+fn deny_reason(value: &serde_json::Value) -> Option<String> {
+    let reason = value.get("reason")?.as_str()?.trim();
+    (!reason.is_empty()).then(|| reason.to_string())
+}
+
 async fn insert_resume_job<'c>(
     resume_id: u32,
     job_id: Uuid,
@@ -5950,11 +5961,15 @@ async fn insert_resume_job<'c>(
     // The approver, possibly anonymous, writes this payload, and later steps receive it as
     // `resume`, interpolated with the flow's own token.
     if windmill_common::variables::untrusted_arg_interpolates(&value.to_string()) {
-        return Err(Error::BadRequest(
-            "The resume payload cannot hold $var:, $jsonvar:, $res: or $encrypted: references, \
+        let what = if approved {
+            "The resume payload"
+        } else {
+            "The denial reason"
+        };
+        return Err(Error::BadRequest(format!(
+            "{what} cannot hold $var:, $jsonvar:, $res: or $encrypted: references, \
              or a $WM_* variable name"
-                .to_string(),
-        ));
+        )));
     }
     sqlx::query!(
         r#"
@@ -7096,18 +7111,23 @@ async fn batch_rerun_handle_job(
     // Call appropriate function to push job to queue
     match job.kind {
         JobKind::Flow => {
-            let result = push_flow_job_by_path_into_queue(
-                authed.clone(),
-                db.clone(),
-                None,
-                user_db.clone(),
-                w_id.clone(),
-                StripPath(job.script_path.clone()),
-                RunJobQuery { skip_preprocessor: Some(true), ..Default::default() },
-                PushArgsOwned { extra: None, args },
-                None,
-            )
-            .await;
+            let result = match RunnableRef::from_path(&job.script_path, true) {
+                Ok(flow) => {
+                    push_flow_job_by_path_into_queue(
+                        authed.clone(),
+                        db.clone(),
+                        None,
+                        user_db.clone(),
+                        w_id.clone(),
+                        &flow,
+                        RunJobQuery { skip_preprocessor: Some(true), ..Default::default() },
+                        PushArgsOwned { extra: None, args },
+                        None,
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            };
             if let Ok((uuid, _, _, _)) = result {
                 resolve_batch_rerun_source(authed, db, user_db, w_id, job.id, uuid).await;
                 return Ok(uuid.to_string());
@@ -7115,19 +7135,22 @@ async fn batch_rerun_handle_job(
         }
         JobKind::Script => {
             let result = if use_latest_version {
-                push_script_job_by_path_into_queue(
-                    authed.clone(),
-                    db.clone(),
-                    None,
-                    user_db.clone(),
-                    w_id.clone(),
-                    StripPath(job.script_path.clone()),
-                    RunJobQuery { skip_preprocessor: Some(true), ..Default::default() },
-                    PushArgsOwned { extra: None, args },
-                    None,
-                )
-                .await
-                .map(|r| r.0)
+                match RunnableRef::from_path(&job.script_path, false) {
+                    Ok(script) => push_script_job_by_path_into_queue(
+                        authed.clone(),
+                        db.clone(),
+                        None,
+                        user_db.clone(),
+                        w_id.clone(),
+                        &script,
+                        RunJobQuery { skip_preprocessor: Some(true), ..Default::default() },
+                        PushArgsOwned { extra: None, args },
+                        None,
+                    )
+                    .await
+                    .map(|r| r.0),
+                    Err(e) => Err(e),
+                }
             } else {
                 run_job_by_hash_inner(
                     authed.clone(),
@@ -7228,7 +7251,7 @@ pub async fn run_flow_by_path(
     let (args, trigger_metadata) = match get_args_and_trigger_metadata(
         &db,
         &authed,
-        RunnableId::from_flow_path(flow.path()),
+        RunnableId::from_ref(&flow),
         &run_query,
         &w_id,
         args,
@@ -7249,7 +7272,7 @@ pub async fn run_flow_by_path(
         None,
         user_db,
         w_id,
-        StripPath(flow.path().to_string()),
+        &flow,
         run_query,
         args,
         trigger_metadata,
@@ -7418,9 +7441,14 @@ async fn resolve_nested_restart(
     let flow_data = if let Some((flow_path, version)) = parent_flow_version {
         windmill_queue::fetch_restart_flow_version(db, workspace_id, flow_path, version).await?
     } else {
-        cache::job::fetch_flow(db, &row.job_kind, row.runnable_id)
-            .or_else(|_| cache::job::fetch_preview_flow(db, &parent_job_id, row.raw_flow))
-            .await?
+        cache::job::fetch_flow_or_preview(
+            db,
+            &row.job_kind,
+            row.runnable_id,
+            &parent_job_id,
+            row.raw_flow,
+        )
+        .await?
     };
     let flow_value = flow_data.value();
     let flow_status: FlowStatus = row
@@ -7682,7 +7710,7 @@ pub async fn run_script_by_path(
     let (args, trigger_metadata) = match get_args_and_trigger_metadata(
         &db,
         &authed,
-        RunnableId::from_script_path(script.path()),
+        RunnableId::from_ref(&script),
         &run_query,
         &w_id,
         args,
@@ -7701,7 +7729,7 @@ pub async fn run_script_by_path(
         None,
         user_db,
         w_id,
-        StripPath(script.path().to_string()),
+        &script,
         run_query,
         args,
         trigger_metadata,
@@ -7909,8 +7937,9 @@ pub async fn run_workflow_as_code(
             JobKind::Script => {
                 let userdb_authed =
                     UserDbWithAuthed { db: user_db.clone(), authed: &authed.to_authed_ref() };
+                let script = RunnableRef::from_path(job.script_path(), false)?;
                 script_path_to_payload(
-                    job.script_path(),
+                    &script,
                     Some(userdb_authed),
                     db.clone(),
                     &w_id,
@@ -8243,7 +8272,7 @@ pub async fn run_wait_result_job_by_path_get(
         UserDbWithAuthed { db: user_db.clone(), authed: &authed.to_authed_ref() };
     let (job_payload, tag, delete_after_use, delete_after_secs, timeout, on_behalf_authed) =
         script_path_to_payload(
-            script_path,
+            &script,
             Some(user_db_with_authed),
             db.clone(),
             &w_id,
@@ -8344,7 +8373,7 @@ pub async fn run_wait_result_flow_by_path_get(
         .to_args_from_runnable(
             &db,
             &w_id,
-            RunnableId::from_flow_path(path),
+            RunnableId::from_ref(&flow),
             run_query.skip_preprocessor,
         )
         .await?;
@@ -8372,7 +8401,7 @@ pub async fn run_wait_result_script_by_path(
             &authed,
             &db,
             &w_id,
-            RunnableId::from_script_path(path),
+            RunnableId::from_ref(&script),
             run_query.skip_preprocessor,
         )
         .await?;
@@ -8395,7 +8424,7 @@ pub async fn run_wait_result_script_by_path_internal(
     let db_authed = UserDbWithAuthed { db: user_db.clone(), authed: &authed.to_authed_ref() };
     let (job_payload, tag, delete_after_use, delete_after_secs, timeout, on_behalf_of) =
         script_path_to_payload(
-            script.path(),
+            script,
             Some(db_authed),
             db.clone(),
             &w_id,
@@ -8621,7 +8650,7 @@ pub async fn run_wait_result_flow_by_path(
             &authed,
             &db,
             &w_id,
-            RunnableId::from_flow_path(path),
+            RunnableId::from_ref(&flow),
             run_query.skip_preprocessor,
         )
         .await?;
@@ -8643,7 +8672,7 @@ pub async fn stream_flow_by_path(
         db,
         user_db,
         w_id,
-        RunnableId::from_flow_path(RunnableRef::from_path(&flow_path.0, true)?.path()),
+        RunnableId::from_ref(&RunnableRef::from_path(&flow_path.0, true)?),
         args,
         run_query,
         method == http::Method::GET,
@@ -8758,15 +8787,14 @@ pub async fn stream_job(
 
     let poll_delay_ms = run_query.poll_delay_ms;
     let (uuid, early_return, has_failure_module) = match runnable_id {
-        RunnableId::ScriptId(ScriptId::ScriptPath(script_path))
-        | RunnableId::HubScript(script_path) => {
+        RunnableId::ScriptId(ScriptId::ScriptPath(script)) | RunnableId::HubScript(script) => {
             let (uuid, _, _) = push_script_job_by_path_into_queue(
                 authed.clone(),
                 db.clone(),
                 None,
                 user_db,
                 w_id.clone(),
-                StripPath(script_path),
+                &script,
                 run_query,
                 args,
                 None,
@@ -8788,14 +8816,14 @@ pub async fn stream_job(
             .await?;
             (uuid, None, false)
         }
-        RunnableId::FlowId(FlowId::FlowPath(flow_path)) => {
+        RunnableId::FlowId(FlowId::FlowPath(flow)) => {
             let (uuid, early_return, has_failure_module, _) = push_flow_job_by_path_into_queue(
                 authed.clone(),
                 db.clone(),
                 None,
                 user_db,
                 w_id.clone(),
-                StripPath(flow_path),
+                &flow,
                 run_query,
                 args,
                 None,
@@ -9194,21 +9222,22 @@ async fn run_preview_script(
 ) -> error::Result<(StatusCode, String)> {
     #[cfg(feature = "enterprise")]
     check_license_key_valid().await?;
-    if !role_can_code(&db, &w_id, &authed).await? {
-        // A deferred run would outlive the running job the exemption keys off.
-        if run_query.get_scheduled_for(&db).await?.is_some()
-            || !operator_may_run_datatable_query(
-                &db,
-                &w_id,
-                authed.job_id,
-                preview.language.as_ref(),
-                preview.content.as_deref().unwrap_or_default(),
-                preview.args.as_ref(),
-            )
-            .await?
-        {
+    // A deferred run would outlive the running job the exemption keys off.
+    let datatable_query = run_query.get_scheduled_for(&db).await?.is_none()
+        && operator_may_run_datatable_query(
+            &db,
+            &w_id,
+            authed.job_id,
+            preview.language.as_ref(),
+            preview.content.as_deref().unwrap_or_default(),
+            preview.args.as_ref(),
+        )
+        .await?;
+    if !datatable_query {
+        if !role_can_code(&db, &w_id, &authed).await? {
             return Err(operator_preview_refusal(authed.job_id));
         }
+        check_role_can_run(&db, &w_id, &authed).await?;
     }
     // Preview runs arbitrary, request-supplied code. require_path_read_access_for_preview
     // only checks folder/namespace *read* access (and is a no-op when path is null), so a
@@ -9325,18 +9354,20 @@ async fn run_inline_preview_script(
     // Same arbitrary-code class as run_preview_script, and every worker and standalone
     // server exposes this route, so an operator is refused on the same terms. A
     // narrowly-scoped token must not escape its scope through inline preview either.
-    if !role_can_code(&db, &w_id, &authed).await?
-        && !operator_may_run_datatable_query(
-            &db,
-            &w_id,
-            job_id,
-            Some(&preview.language),
-            &preview.content,
-            preview.args.as_ref(),
-        )
-        .await?
+    if !operator_may_run_datatable_query(
+        &db,
+        &w_id,
+        job_id,
+        Some(&preview.language),
+        &preview.content,
+        preview.args.as_ref(),
+    )
+    .await?
     {
-        return Err(operator_preview_refusal(job_id));
+        if !role_can_code(&db, &w_id, &authed).await? {
+            return Err(operator_preview_refusal(job_id));
+        }
+        check_role_can_run(&db, &w_id, &authed).await?;
     }
     check_scopes(&authed, || format!("jobs:run"))?;
     windmill_queue::tags::check_inline_run_allowed(&w_id, &db).await?;
@@ -10115,6 +10146,7 @@ async fn add_batch_jobs(
                     concurrent_limit,
                     concurrency_time_window_s,
                     concurrency_key: custom_concurrency_key,
+                    ..
                 },
             ..
         },
@@ -10287,9 +10319,9 @@ async fn add_batch_jobs(
             INSERT INTO v2_job
                 (id, workspace_id, raw_code, raw_lock, raw_flow, tag, runnable_id, runnable_path, kind,
                 script_lang, created_by, permissioned_as, permissioned_as_email, concurrent_limit,
-                concurrency_time_window_s, timeout, args)
+                concurrency_time_window_s, timeout, args, priority)
                 (SELECT uuid, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                ('{ "uuid": "' || uuid || '" }')::jsonb FROM uuid_table)
+                ('{ "uuid": "' || uuid || '" }')::jsonb, 0 FROM uuid_table)
             RETURNING id AS "id!""#,
             w_id,
             raw_code,
@@ -10316,8 +10348,8 @@ async fn add_batch_jobs(
                 select unnest($4::uuid[]) as uuid
             )
             INSERT INTO v2_job_queue
-                (id, workspace_id, scheduled_for, tag)
-                (SELECT uuid, $1, $2, $3 FROM uuid_table)
+                (id, workspace_id, scheduled_for, tag, priority)
+                (SELECT uuid, $1, $2, $3, 0 FROM uuid_table)
             RETURNING id"#,
         w_id,
         Utc::now(),
@@ -10611,7 +10643,7 @@ async fn run_dynamic_select(
                     None,
                     user_db.clone(),
                     w_id.clone(),
-                    StripPath(RunnableRef::from_path(&path, false)?.path().to_string()),
+                    &RunnableRef::from_path(&path, false)?,
                     run_query.clone(),
                     push_args,
                     None,

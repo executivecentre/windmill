@@ -7,6 +7,7 @@ import { parseMaxTokenExpirationDays } from '$lib/tokenExpiration'
 import { writable } from 'svelte/store'
 import { OidcService } from '$lib/gen'
 import { workspaceRolesErrors } from '$lib/workspaceRoles'
+import { deepEqual } from 'fast-equals'
 
 /**
  * Bumped after instance settings are successfully saved. Settings whose display
@@ -615,6 +616,17 @@ export const settings: Record<string, Setting[]> = {
 			hideInQuickSetup: true
 		},
 		{
+			label: 'Run concurrency-limited jobs in order',
+			description:
+				"Jobs waiting on a concurrency limit keep the order workers pull jobs in: for each tag, by priority, then by when they became due. On by default. Turned off, a job deferred by its concurrency limit loses its place and can be overtaken by one queued after it, which drains a busy key of short jobs faster. In order, a slot is only given to the job first in its tag's line, so a job that cannot start yet (for example one its own concurrency time window still holds back) holds back the jobs behind it on the same key and tag; jobs of other tags are not held back. Jobs that become due at the same moment, before any of them has waited, start in the order workers pick them up. Admitting jobs of a key one at a time in order lowers its throughput at high limits.",
+			key: 'concurrency_limit_in_order',
+			fieldType: 'boolean',
+			defaultValue: () => true,
+			storage: 'setting',
+			ee_only: 'Concurrency limits are an Enterprise feature.',
+			hideInQuickSetup: true
+		},
+		{
 			label: 'Max jobs queued per concurrency key',
 			description:
 				'Rejects new jobs once this many are already queued behind one concurrency key. Jobs sharing a key run at most <em>concurrent limit</em> at a time regardless of spare worker capacity, so a caller pushing faster than the key drains grows a backlog no capacity can absorb. Scoped per key, so a runaway producer cannot block the rest of the workspace. Set 0 to disable. Default 10000.',
@@ -861,6 +873,30 @@ export const settings: Record<string, Setting[]> = {
 			storage: 'setting',
 			ee_only: '',
 			actionButton: manageInstanceGroupsButton
+		},
+		{
+			label: 'SSO email claim',
+			description:
+				"The claim or SAML attribute holding a user's email. Windmill accounts are keyed by email.",
+			tooltip:
+				'Leave empty to use the email claim on OIDC and the NameID on SAML. A login whose claim is missing falls back to that default, so one setting can serve providers that name it differently. The claim decides which account a login opens, so map it only to an attribute users cannot edit at the identity provider. GitHub and Nextcloud logins always use their own email source. A changed email signs in as a different user.',
+			key: 'sso_email_claim',
+			fieldType: 'text',
+			placeholder: 'email',
+			storage: 'setting',
+			ee_only: ''
+		},
+		{
+			label: 'SSO username claim',
+			description:
+				'The claim or SAML attribute holding the username given to an account created at its first SSO login. NameID means the SAML NameID.',
+			tooltip:
+				'Leave empty to use preferred_username on OIDC and the usual username attributes on SAML (uid, username, preferred_username, UPN). A login whose claim is missing falls back to that default. Existing accounts keep their username. Has no effect when automatic username creation is off.',
+			key: 'sso_username_claim',
+			fieldType: 'text',
+			placeholder: 'preferred_username',
+			storage: 'setting',
+			ee_only: ''
 		},
 		{
 			label: 'MCP external identity provider',
@@ -1744,3 +1780,96 @@ export const WORKSPACE_REGISTRY_SETTINGS: Setting[] = settings['Registries'].fil
 		s.key !== 'uv_index_strategy' &&
 		s.key !== 'uv_python_install_mirror'
 )
+
+export const SENSITIVE_UNCHANGED = '__SENSITIVE_AND_UNCHANGED__'
+/** Display-only marker for the Review changes diff; never parsed back into a value. */
+export const SENSITIVE_CHANGED = '__SENSITIVE_AND_CHANGED__'
+
+export const sensitiveKeys: Set<string> = new Set([
+	...[...Object.values(settings), scimSamlSetting]
+		.flatMap((s) => Object.values(s))
+		.filter((s) => s.fieldType === 'password' || s.fieldType === 'license_key')
+		.map((s) => s.key),
+	'ducklake_user_pg_pwd',
+	'jwt_secret',
+	'workspace_registries'
+])
+
+// Nested fields inside object-valued settings that contain secrets.
+// Each entry maps a top-level key to its sensitive sub-field names.
+export const nestedSensitiveFields: Record<string, string[]> = {
+	smtp_settings: ['smtp_password'],
+	secret_backend: ['token', 'approle_secret_id', 'client_secret', 'secret_access_key'],
+	object_store_cache_config: ['secret_key', 'serviceAccountKey', 'accessKey'],
+	custom_instance_pg_databases: ['user_pwd'],
+	external_instance_pg: ['password'],
+	rsa_keys: ['private_key'],
+	github_enterprise_app: ['private_key'],
+	external_secrets: ['vault.token', 'vault.approle_secret_id']
+}
+
+// A field may name one nested level, `parent.child`.
+export function getField(obj: any, field: string): any {
+	const [a, b] = field.split('.')
+	return b === undefined ? obj?.[a] : obj?.[a]?.[b]
+}
+
+export function setField(obj: any, field: string, value: any) {
+	const [a, b] = field.split('.')
+	if (b === undefined) obj[a] = value
+	else if (obj[a] && typeof obj[a] === 'object') obj[a] = { ...obj[a], [b]: value }
+}
+
+/**
+ * Replaces sensitive values with placeholders. An unchanged non-empty value becomes
+ * SENSITIVE_UNCHANGED, which the YAML editor restores on parse. A changed value is kept
+ * in clear so the YAML editor can edit it, unless `markChanged` is set: then it becomes
+ * SENSITIVE_CHANGED, for read-only views such as the Review changes diff.
+ */
+export function maskSensitive(
+	obj: Record<string, any>,
+	initialValues: Record<string, any> | undefined,
+	initialOauths: Record<string, any> | undefined,
+	opts: { markChanged?: boolean } = {}
+): Record<string, any> {
+	// Values are deep clones of the initial ones, so a read-only view compares
+	// structurally; the editor keeps `===`, which its restore step relies on.
+	const same = opts.markChanged ? deepEqual : (a: any, b: any) => a === b
+	const mask = (current: any, initial: any): string | undefined => {
+		if (current == null || current === '') return undefined
+		if (same(current, initial)) return SENSITIVE_UNCHANGED
+		return opts.markChanged ? SENSITIVE_CHANGED : undefined
+	}
+
+	const masked: Record<string, any> = {}
+	for (const [key, value] of Object.entries(obj)) {
+		if (key === 'oauths' && typeof value === 'object' && value !== null) {
+			const maskedOauths: Record<string, any> = {}
+			for (const [provider, config] of Object.entries(value as Record<string, any>)) {
+				if (typeof config === 'object' && config !== null && 'secret' in config) {
+					const m = mask(config.secret, initialOauths?.[provider]?.secret)
+					maskedOauths[provider] = m ? { ...config, secret: m } : config
+				} else {
+					maskedOauths[provider] = config
+				}
+			}
+			masked[key] = maskedOauths
+		} else if (key in nestedSensitiveFields && typeof value === 'object' && value !== null) {
+			const cp = { ...value }
+			const init = initialValues?.[key]
+			for (const field of nestedSensitiveFields[key]) {
+				const m = mask(
+					field === 'serviceAccountKey' ? JSON.stringify(cp[field]) : getField(cp, field),
+					field === 'serviceAccountKey' ? JSON.stringify(init?.[field]) : getField(init, field)
+				)
+				if (m) setField(cp, field, m)
+			}
+			masked[key] = cp
+		} else if (sensitiveKeys.has(key)) {
+			masked[key] = mask(value, initialValues?.[key]) ?? value
+		} else {
+			masked[key] = value
+		}
+	}
+	return masked
+}
