@@ -15,6 +15,7 @@
 	import { installDevPollingDormancy } from '$lib/utils/devPollingDormancy'
 	import { noteClientNavigation, releaseHomeSnapshot } from '$lib/homeSnapshot'
 	import { onNavigate } from '$app/navigation'
+	import { BRAND_NAME } from '$lib/branding'
 	interface Props {
 		children?: import('svelte').Snippet
 	}
@@ -77,7 +78,7 @@
 			src="https://snippet.meticulous.ai/v1/meticulous.js"
 		></script>
 	{/if} -->
-	<title>{page.data?.stuff?.title ? `${page.data?.stuff?.title} | ` : ''}Windmill</title>
+	<title>{page.data?.stuff?.title ? `${page.data?.stuff?.title} | ` : ''}{BRAND_NAME}</title>
 </svelte:head>
 
 {@render children?.()}

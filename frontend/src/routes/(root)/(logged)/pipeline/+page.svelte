@@ -7,6 +7,7 @@
 	import PageHeaderContent from '$lib/components/PageHeaderContent.svelte'
 	import Badge from '$lib/components/common/badge/Badge.svelte'
 	import { onMount } from 'svelte'
+	import { BRAND_NAME } from '$lib/branding'
 
 	const ACK_STORAGE_KEY = 'pipeline-alpha-ack'
 
@@ -34,7 +35,7 @@
 </script>
 
 <svelte:head>
-	<title>Pipelines — Windmill</title>
+	<title>Pipelines — {BRAND_NAME}</title>
 </svelte:head>
 
 <!-- No title row of its own: the band already names this page, and the badge that sat beside the

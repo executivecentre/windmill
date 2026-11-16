@@ -2,7 +2,8 @@
 	import Uptodate from './Uptodate.svelte'
 	import Version from './Version.svelte'
 	import DarkModeToggle from './sidebar/DarkModeToggle.svelte'
-	import WindmillIcon from './icons/WindmillIcon.svelte'
+	import BrandIcon from './icons/BrandIcon.svelte'
+	import { BRAND_NAME } from '$lib/branding'
 	import { whitelabelNameStore } from '$lib/stores'
 	import { capitalize } from '$lib/utils'
 
@@ -23,8 +24,8 @@
 			{#if $whitelabelNameStore}
 				{capitalize($whitelabelNameStore)}
 			{:else}
-				<WindmillIcon height="28px" width="28px" />
-				Windmill
+				<BrandIcon height="28px" width="28px" />
+				{BRAND_NAME}
 			{/if}
 		{/if}
 	</div>

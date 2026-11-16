@@ -20,7 +20,7 @@
 	import LogPanel from '../scriptEditor/LogPanel.svelte'
 	import JobLoader from '../JobLoader.svelte'
 	import { Button } from '../common'
-	import WindmillIcon from '../icons/WindmillIcon.svelte'
+	import BrandIcon from '../icons/BrandIcon.svelte'
 	import Popover from '../meltComponents/Popover.svelte'
 	import DbtProjectPanel from './DbtProjectPanel.svelte'
 	import DbtModelGraph from './DbtModelGraph.svelte'
@@ -373,7 +373,7 @@
 	<div class="ml-auto shrink-0 flex items-center gap-2">
 		{#if testIsLoading}
 			<Button on:click={() => jobLoader?.cancelJob()} unifiedSize="sm">
-				<WindmillIcon white={true} class="mr-2 text-white" height="16px" width="20px" spin="fast" />
+				<BrandIcon white={true} class="mr-2 text-white" height="16px" width="20px" spin="fast" />
 				Cancel
 			</Button>
 		{:else}

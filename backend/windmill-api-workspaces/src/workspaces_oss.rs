@@ -12,15 +12,17 @@ use windmill_api_auth::ApiAuthed;
 use windmill_common::DB;
 
 #[cfg(not(feature = "private"))]
+#[path = "workspaces_oss_local.rs"]
+pub mod local;
+
+#[cfg(not(feature = "private"))]
 pub async fn edit_auto_invite(
     _authed: ApiAuthed,
     _db: DB,
     _w_id: String,
     _ea: EditAutoInvite,
 ) -> windmill_common::error::Result<String> {
-    Err(windmill_common::error::Error::internal_err(
-        "Not implemented on OSS".to_string(),
-    ))
+    local::edit_auto_invite(_authed, _db, _w_id, _ea).await
 }
 
 #[cfg(not(feature = "private"))]

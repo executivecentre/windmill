@@ -21,7 +21,7 @@
 	import Toggle from '$lib/components/Toggle.svelte'
 	import UserSettings from '$lib/components/UserSettings.svelte'
 	import SuperadminSettings from '$lib/components/SuperadminSettings.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 	import CenteredModal from '$lib/components/CenteredModal.svelte'
 	import { USER_SETTINGS_HASH } from '$lib/components/sidebar/settings'
 	import { switchWorkspace } from '$lib/storeUtils'
@@ -300,7 +300,7 @@
 		{:else}
 			<div class="flex flex-row items-center gap-2 justify-between mb-4">
 				<h2 class="inline-flex gap-2 text-sm font-semibold text-emphasis flex-shrink-0">
-					Workspaces{#if loading}<WindmillIcon spin="fast" />{/if}
+					Workspaces{#if loading}<BrandIcon spin="fast" />{/if}
 				</h2>
 
 				{#if allWorkspaces.length > 1}

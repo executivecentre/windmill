@@ -4,7 +4,7 @@
 	import { argsToJsonPayload } from '$lib/schema'
 	import JobLoader from '$lib/components/JobLoader.svelte'
 	import { Button } from '$lib/components/common'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 	import LogPanel from '$lib/components/scriptEditor/LogPanel.svelte'
 	import {
 		type CompletedJob,
@@ -1125,7 +1125,7 @@
 			<div class="flex justify-center pt-1">
 				{#if testIsLoading}
 					<Button on:click={jobLoader?.cancelJob} btnClasses="w-full" color="red" size="xs">
-						<WindmillIcon
+						<BrandIcon
 							white={true}
 							class="mr-2 text-white"
 							height="20px"

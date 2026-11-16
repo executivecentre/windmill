@@ -1,9 +1,7 @@
 <script lang="ts">
 	import { applyDarkModeVariant } from '$lib/darkModeVariant'
 	import type { UserExt } from '$lib/stores'
-	import { isCloudHosted } from '$lib/cloud'
 	import Skeleton from '$lib/components/common/skeleton/Skeleton.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
 	import { setContext } from 'svelte'
 	import { IS_APP_PUBLIC_CONTEXT_KEY } from '../types'
 	import type { AppWithLastVersion } from '$lib/gen/types.gen'
@@ -38,13 +36,12 @@
 		 * explicitly — `$userStore` describes the workspace the page is navigated to, which
 		 * is not the app's inside an AI session's preview tab. */
 		user?: UserExt | undefined
-		/** The instance license, which fades the "Powered by" badge and lets a low-code app's
-		 * custom CSS apply. */
+		/** The instance license, which lets a low-code app's custom CSS apply. */
 		license?: string | undefined
 		/**
 		 * In-workspace rendering (`/apps/get`, `/app_embed`): keep exact parity
-		 * with the pre-sandbox member viewer — no "Powered by Windmill" badge, no
-		 * HTML-result approval gate, column flex wrapper.
+		 * with the pre-sandbox member viewer — no HTML-result approval gate, column flex
+		 * wrapper.
 		 */
 		inWorkspace?: boolean
 		hideRefreshBar?: boolean
@@ -75,20 +72,6 @@
 
 <!-- Only the raw-app branch is imported statically: everything else waits for app.css and
      its own chunk, see publicAppApi.ts. -->
-{#if !inWorkspace}
-	{#await loadAppCss() then}
-		<div
-			class="z-50 text-xs fixed bottom-1 right-2 {license && !isCloudHosted()
-				? 'transition-opacity delay-1000 duration-1000 opacity-20 hover:delay-0 hover:opacity-100'
-				: ''}"
-		>
-			<a href="https://windmill.dev" class="whitespace-nowrap text-primary inline-flex items-center"
-				>Powered by &nbsp;<WindmillIcon />&nbsp;Windmill</a
-			>
-		</div>
-	{/await}
-{/if}
-
 {#if notExists || noPermission}
 	{#await Promise.all([loadAppCss(), import('./PublicAppAccess.svelte')]) then [, { default: PublicAppAccess }]}
 		<PublicAppAccess

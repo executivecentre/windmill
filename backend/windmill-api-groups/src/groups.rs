@@ -217,18 +217,9 @@ pub async fn require_is_owner(
     }
 }
 
-async fn _check_nb_of_groups(db: &DB) -> Result<()> {
-    // Groups that back workspace settings do not count toward the limit.
-    let nb_groups = sqlx::query_scalar!("SELECT COUNT(*) FROM group_ WHERE name != 'all' AND name != 'error_handler' AND name != 'slack' AND name != 'wm_deployers' AND name != 'variable_expiration_handler'",)
-        .fetch_one(db)
-        .await?;
-    if nb_groups.unwrap_or(0) >= 3 {
-        return Err(Error::BadRequest(
-            "You have reached the maximum number of groups (3 outside of native groups 'all', 'slack', 'error_handler', 'wm_deployers' and 'variable_expiration_handler') without an enterprise license"
-                .to_string(),
-        ));
-    }
-    return Ok(());
+// Local patch (local/PATCHES.md): no group quota.
+async fn _check_nb_of_groups(_db: &DB) -> Result<()> {
+    Ok(())
 }
 
 async fn create_group(

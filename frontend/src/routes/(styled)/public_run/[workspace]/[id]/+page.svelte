@@ -15,7 +15,8 @@
 	import JobLoader from '$lib/components/JobLoader.svelte'
 	import JobStatus from '$lib/components/JobStatus.svelte'
 	import LogViewer from '$lib/components/LogViewer.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
+	import { BRAND_NAME } from '$lib/branding'
 
 	// SvelteKit reuses this component across /public_run/* navigations, so every input
 	// derived from the URL has to stay reactive — a captured-once value would leave the
@@ -86,7 +87,7 @@
 </script>
 
 <svelte:head>
-	<title>Run {truncateRev(jobId, 8)} | Windmill</title>
+	<title>Run {truncateRev(jobId, 8)} | {BRAND_NAME}</title>
 	<!-- The URL *is* the credential: keep the link out of search indexes, and out of the
 	     Referer header of anything the rendered result or logs may link to. -->
 	<meta name="robots" content="noindex, nofollow" />
@@ -107,7 +108,7 @@
 <div class="min-h-screen bg-surface">
 	<div class="border-b bg-surface-secondary">
 		<div class="max-w-7xl mx-auto w-full px-4 py-3 flex flex-wrap items-center gap-3">
-			<WindmillIcon height="20px" width="20px" />
+			<BrandIcon height="20px" width="20px" />
 			<span class="text-sm font-semibold text-primary">Run {truncateRev(jobId, 8)}</span>
 			<Badge color="blue" small>
 				<span class="flex items-center gap-1"><Globe size={12} /> Public read-only view</span>

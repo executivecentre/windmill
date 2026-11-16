@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { whitelabelNameStore } from '$lib/stores'
 	import { capitalize } from '$lib/utils'
+	import { BRAND_NAME } from '$lib/branding'
 
 	interface Props {
 		/** undefined until the instance's login options are known. */
@@ -9,7 +10,7 @@
 
 	let { hasThirdParty }: Props = $props()
 
-	let instanceName = $derived($whitelabelNameStore ? capitalize($whitelabelNameStore) : 'Windmill')
+	let instanceName = $derived($whitelabelNameStore ? capitalize($whitelabelNameStore) : BRAND_NAME)
 </script>
 
 <!-- Held blank rather than defaulted while the options load: a third-party login also creates

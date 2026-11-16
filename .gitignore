@@ -2,6 +2,7 @@ target/
 .DS_Store
 nohup.out
 local/
+!/local/
 frontend/src/routes/test.svelte
 CaddyfileRemoteMalo
 *.swp

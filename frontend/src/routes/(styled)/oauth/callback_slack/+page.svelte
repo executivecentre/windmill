@@ -7,7 +7,7 @@
 	import { workspaceStore } from '$lib/stores'
 	import CenteredPage from '$lib/components/CenteredPage.svelte'
 	import PageHeader from '$lib/components/PageHeader.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 
 	let error = page.url.searchParams.get('error')
 	let code = page.url.searchParams.get('code') ?? undefined
@@ -34,6 +34,6 @@
 <CenteredPage>
 	<PageHeader title="Connection to slack in progress" />
 	<div class="mx-auto w-0">
-		<WindmillIcon height="80px" width="80px" spin="fast" />
+		<BrandIcon height="80px" width="80px" spin="fast" />
 	</div>
 </CenteredPage>

@@ -14,7 +14,7 @@
 	import { emptyString, parseQueryParams } from '$lib/utils'
 	import { getUserExt } from '$lib/user'
 	import LoginPageHeader from '$lib/components/LoginPageHeader.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 	import { clearStores } from '$lib/storeUtils'
 	import { setLicense } from '$lib/enterpriseUtils'
 	import Login from '$lib/components/Login.svelte'
@@ -156,7 +156,7 @@
 	<div class="sm:mx-auto sm:w-full sm:max-w-sm">
 		<div class="mx-auto flex justify-center">
 			{#if !$enterpriseLicense || !$whitelabelNameStore}
-				<WindmillIcon height="48px" width="48px" spin="slow" />
+				<BrandIcon height="48px" width="48px" spin="slow" />
 			{/if}
 		</div>
 		<div class="mt-6">

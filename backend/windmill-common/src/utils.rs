@@ -37,8 +37,15 @@ use url::Url;
 pub const MAX_PER_PAGE: usize = 10000;
 pub const DEFAULT_PER_PAGE: usize = 1000;
 
-pub const GIT_VERSION: &str =
-    git_version!(args = ["--tag", "--always"], fallback = "unknown-version");
+// Local patch (local/PATCHES.md): where `git describe` finds no tag (this fork has none) or
+// cannot run (the image is built from a submodule), use Cargo's version. A bare hash or
+// "unknown-version" parses as 0.1.0, which min_version.rs takes for the oldest worker, and
+// every version-gated feature turns off: hence no `--always`.
+pub const GIT_VERSION: &str = git_version!(
+    args = ["--tag"],
+    cargo_prefix = "v",
+    fallback = "unknown-version"
+);
 
 pub const AGENT_JWT_PREFIX: &str = "jwt_agent_";
 pub const WORKER_NAME_PREFIX: &str = "wk";

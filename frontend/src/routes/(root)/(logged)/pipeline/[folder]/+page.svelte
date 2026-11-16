@@ -1,5 +1,6 @@
 <script lang="ts">
 	import pLimit from 'p-limit'
+	import { BRAND_NAME } from '$lib/branding'
 	import { roleCapabilities, workspaceStore, userStore } from '$lib/stores'
 	import { PIPELINE_DRAFT_KIND, pipelineBundlePath } from '$lib/pipelinePaths'
 	import PageHeaderContent from '$lib/components/PageHeaderContent.svelte'
@@ -2751,7 +2752,7 @@
 </script>
 
 <svelte:head>
-	<title>Pipeline · {folder} — Windmill</title>
+	<title>Pipeline · {folder} — {BRAND_NAME}</title>
 </svelte:head>
 
 <PageHeaderContent
