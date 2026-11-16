@@ -7,7 +7,7 @@
 	import { repointLinkedAgent } from './linkedAgentDrafts'
 	import FlowModuleSchemaMap from './map/FlowModuleSchemaMap.svelte'
 	import type { OpenInSessionSource } from '$lib/components/sessions/OpenInSessionButton.svelte'
-	import WindmillIcon from '../icons/WindmillIcon.svelte'
+	import BrandIcon from '../icons/BrandIcon.svelte'
 	import { Skeleton } from '../common'
 	import { getContext, onDestroy, onMount, setContext, untrack } from 'svelte'
 	import type { FlowEditorContext, FlowPanelDetachContext } from './types'
@@ -442,7 +442,7 @@
 				{#if loading}
 					<div class="w-full h-full">
 						<div class="block m-auto pt-40 w-10">
-							<WindmillIcon height="40px" width="40px" spin="fast" />
+							<BrandIcon height="40px" width="40px" spin="fast" />
 						</div>
 					</div>
 				{:else if modalPanel}

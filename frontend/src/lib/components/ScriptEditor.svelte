@@ -32,7 +32,7 @@
 	import { createEventDispatcher, getContext, onDestroy, onMount, untrack } from 'svelte'
 	import { Button } from './common'
 	import SplitPanesWrapper from './splitPanes/SplitPanesWrapper.svelte'
-	import WindmillIcon from './icons/WindmillIcon.svelte'
+	import BrandIcon from './icons/BrandIcon.svelte'
 	import * as Y from 'yjs'
 	import { scriptLangToEditorLang } from '$lib/scripts'
 	import { langToExt } from '$lib/editorLangUtils'
@@ -2411,7 +2411,7 @@
 
 {#snippet cancelTestButton(size: 'sm' | 'md', btnClasses: string)}
 	<Button on:click={() => jobLoader?.cancelJob()} unifiedSize={size} {btnClasses}>
-		<WindmillIcon
+		<BrandIcon
 			white={true}
 			class="mr-2 text-white"
 			height={size === 'md' ? '16px' : '14px'}

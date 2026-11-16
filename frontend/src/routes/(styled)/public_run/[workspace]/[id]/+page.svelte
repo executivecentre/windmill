@@ -15,7 +15,7 @@
 	import JobLoader from '$lib/components/JobLoader.svelte'
 	import JobStatus from '$lib/components/JobStatus.svelte'
 	import LogViewer from '$lib/components/LogViewer.svelte'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 	import { BRAND_NAME } from '$lib/branding'
 
 	// SvelteKit reuses this component across /public_run/* navigations, so every input
@@ -108,7 +108,7 @@
 <div class="min-h-screen bg-surface">
 	<div class="border-b bg-surface-secondary">
 		<div class="max-w-7xl mx-auto w-full px-4 py-3 flex flex-wrap items-center gap-3">
-			<WindmillIcon height="20px" width="20px" />
+			<BrandIcon height="20px" width="20px" />
 			<span class="text-sm font-semibold text-primary">Run {truncateRev(jobId, 8)}</span>
 			<Badge color="blue" small>
 				<span class="flex items-center gap-1"><Globe size={12} /> Public read-only view</span>

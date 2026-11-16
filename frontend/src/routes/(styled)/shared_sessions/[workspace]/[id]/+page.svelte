@@ -3,7 +3,7 @@
 	import { resource } from 'runed'
 	import { Globe, Link2Off, LogIn, MessagesSquare, Users } from 'lucide-svelte'
 	import { Badge, Button, EmptyState, Skeleton } from '$lib/components/common'
-	import WindmillIcon from '$lib/components/icons/WindmillIcon.svelte'
+	import BrandIcon from '$lib/components/icons/BrandIcon.svelte'
 	import SharedSessionTranscript from '$lib/components/sessions/SharedSessionTranscript.svelte'
 	import { readSessionSnapshot } from '$lib/components/sessions/sessionSharing'
 	import { applyDarkModeVariant } from '$lib/darkModeVariant'
@@ -85,7 +85,7 @@
 <div class="flex min-h-screen flex-col bg-surface" data-sveltekit-reload>
 	<div class="border-b bg-surface-secondary">
 		<div class="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3">
-			<WindmillIcon height="20px" width="20px" />
+			<BrandIcon height="20px" width="20px" />
 			{#if found}
 				<div class="flex min-w-0 flex-1 flex-col">
 					<div class="flex min-w-0 items-center gap-2">

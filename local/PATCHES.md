@@ -10,8 +10,9 @@ This branch, `feature/custom-unlimited`, is Windmill's open-source code with a f
 - no credentials in the request log;
 - Cargo's version where the build cannot describe a release tag, so version-gated features stay
   on;
-- AI Portal branding: its mark as the favicon and on the sidebar and login page, "AI Portal" as
-  the name there and in page titles, and no "Powered by Windmill" badge on shared apps.
+- AI Portal branding: its mark as the favicon and app icons, on the loading screen, sidebar,
+  sign-in pages and loading indicators, "AI Portal" as the name there and in page titles, and no
+  "Powered by Windmill" badge on shared apps.
 
 It is built from Community Edition code only, with the cargo features
 `oss_core,all_languages,jemalloc` (never `private`, `enterprise`, `no_auth` or `oss`), and uses no
@@ -170,6 +171,117 @@ Windmill's migrations only move forward: back up the database before a new relea
 - **Reason**: the login page's brand.
 - **Re-apply**: change the fallback name again.
 
+### `frontend/src/app.html`
+
+- **Change**: the loading screen shown before the app starts (and so before SSO sign-in) shows
+  `/logo.svg` turning as slowly as the login page's mark (50 s a turn, none under reduced
+  motion) instead of Windmill's inline polygons and their `.st2`/`.st3` styles.
+- **Reason**: the first thing every page load paints.
+- **Re-apply**: replace the SVG inside `#svelte-global-loader` with the `<img>` again, and its
+  styles with `#wm-splash-mark`'s.
+
+### `frontend/static/manifest.webmanifest`
+
+- **Change**: `name` and `short_name` are "AI Portal" (`BRAND_NAME`) instead of "Windmill".
+- **Reason**: the installed app's name.
+- **Re-apply**: set both names again.
+
+### `frontend/static/apple-touch-icon.png`
+
+- **Change**: the brand mark in `BRAND_COLOR` on white, 180×180, instead of Windmill's.
+- **Reason**: the home-screen icon on iOS (`app.html`).
+- **Re-apply**: overwrite upstream's file with this one. To redraw it, render `static/logo.svg`
+  at the size with any SVG rasteriser: the mark spans 72% of the square here, 90% in `pwa-192.png`
+  and `pwa-512.png` (transparent), 60% in `pwa-maskable-512.png` (white, inside the safe zone).
+
+### `frontend/static/pwa-192.png`
+
+- **Change**: the brand mark, as for `apple-touch-icon.png`.
+- **Reason**: the installed app's icon (`manifest.webmanifest`).
+- **Re-apply**: as for `apple-touch-icon.png`.
+
+### `frontend/static/pwa-512.png`
+
+- **Change**: the brand mark, as for `apple-touch-icon.png`.
+- **Reason**: the installed app's icon (`manifest.webmanifest`).
+- **Re-apply**: as for `apple-touch-icon.png`.
+
+### `frontend/static/pwa-maskable-512.png`
+
+- **Change**: the brand mark, as for `apple-touch-icon.png`.
+- **Reason**: the installed app's icon where the platform masks it to a shape.
+- **Re-apply**: as for `apple-touch-icon.png`.
+
+### `frontend/src/lib/components/LoginPageHeader.svelte`
+
+- **Change**: the header's brand is `BrandIcon` and `BRAND_NAME` instead of `WindmillIcon` and
+  "Windmill" (a whitelabel license name still takes precedence).
+- **Reason**: the header of every `CenteredModal` page: the SSO callback, logout, first sign-in,
+  workspace list, invitations, password reset.
+- **Re-apply**: swap the icon and the fallback name.
+
+### `frontend/src/lib/components/CenteredModal.svelte`
+
+- **Change**: `title` defaults to `BRAND_NAME` instead of "Windmill".
+- **Reason**: the heading of the pages that pass no title.
+- **Re-apply**: change the default again.
+
+### `frontend/src/lib/components/ScriptEditor.svelte`
+
+- **Change**: the turning mark on the test run's Cancel button is `BrandIcon` instead of
+  `WindmillIcon`.
+- **Reason**: a loading indicator showing the brand. Windmill's mark stays where it means Windmill
+  itself (the Hub toggles, the integration icons).
+- **Re-apply**: swap the icon; keep its props.
+
+### `frontend/src/lib/components/Dev.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on its Cancel button.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/lib/components/dbt/DbtEditor.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on its Cancel button.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/lib/components/flows/FlowEditor.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on the flow's loading screen.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/routes/(root)/(logged)/user/(user)/workspaces/+page.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, next to the heading while the list loads.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/routes/(root)/(logged)/workspace_settings/checkout/+page.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on the waiting screen.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/routes/(styled)/oauth/callback_slack/+page.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on the waiting screen.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/routes/(styled)/oauth/callback_slack/instance/+page.svelte`
+
+- **Change**: as for `ScriptEditor.svelte`, on the waiting screen.
+- **Reason**: as for `ScriptEditor.svelte`.
+- **Re-apply**: as for `ScriptEditor.svelte`.
+
+### `frontend/src/routes/(styled)/shared_sessions/[workspace]/[id]/+page.svelte`
+
+- **Change**: the header's mark is `BrandIcon` instead of `WindmillIcon`.
+- **Reason**: a shared session's public page.
+- **Re-apply**: swap the header icon.
+
 ### `frontend/src/lib/components/apps/editor/PublicApp.svelte`
 
 - **Change**: the "Powered by Windmill" badge at the bottom right of shared apps (public, custom
@@ -272,10 +384,12 @@ compile.
   manual add sends.
 - `frontend/src/lib/branding.ts`: the brand in one place, `BRAND_NAME`, `BRAND_COLOR` and the
   mark (`BRAND_MARK_PATH` in a `BRAND_MARK_SIZE` square). Every patched brand spot reads it;
-  `static/logo.svg` repeats the mark and colour. Rebranding means editing these two files.
+  `static/logo.svg` repeats the mark and colour, `static/manifest.webmanifest` the name, and the
+  static PNG icons are drawn from `logo.svg`. Rebranding means editing these and redrawing those.
 - `frontend/src/lib/components/icons/BrandIcon.svelte`: the brand mark as an inline SVG, in
   `BRAND_COLOR` under the light theme and white under the dark one, whatever text colour the
-  caller passes. It accepts `WindmillIcon`'s props, `spin` included (off under reduced motion).
+  caller passes, or white throughout with `white` (the red Cancel buttons). It accepts
+  `WindmillIcon`'s props, `spin` included (off under reduced motion).
 - `backend/windmill-api-integration-tests/tests/oss_sso_login.rs`: SSO sign-in against a mock
   provider.
 - `backend/windmill-api-integration-tests/tests/oss_user_management.rs`: user creation and

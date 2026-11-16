@@ -3,6 +3,7 @@
 	import { twMerge } from 'tailwind-merge'
 	import { Loader2 } from 'lucide-svelte'
 	import LoginPageHeader from './LoginPageHeader.svelte'
+	import { BRAND_NAME } from '$lib/branding'
 
 	interface Props {
 		subtitle?: string | undefined
@@ -25,7 +26,7 @@
 	let {
 		subtitle = undefined,
 		subtitleSnippet = undefined,
-		title = 'Windmill',
+		title = BRAND_NAME,
 		large = false,
 		centerVertically = true,
 		loading = false,

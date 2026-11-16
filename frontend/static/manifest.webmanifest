@@ -1,7 +1,7 @@
 {
 	"id": "/",
-	"name": "Windmill",
-	"short_name": "Windmill",
+	"name": "AI Portal",
+	"short_name": "AI Portal",
 	"description": "Scripts, flows and apps for internal tools, workflows and background jobs",
 	"start_url": "/",
 	"scope": "/",

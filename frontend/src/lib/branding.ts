@@ -1,6 +1,7 @@
 // The instance's brand, in one place: the sidebar, the login page and the run-page favicon read
-// it from here. `static/logo.svg`, the favicon, is a static file that cannot import this module,
-// so it repeats BRAND_MARK_PATH and BRAND_COLOR and must be changed with them.
+// it from here. `static/logo.svg`, the favicon and loading screen, is a static file that cannot
+// import this module, so it repeats BRAND_MARK_PATH and BRAND_COLOR and must be changed with them;
+// so must `static/manifest.webmanifest`'s names and the static PNG icons drawn from logo.svg.
 export const BRAND_NAME = 'AI Portal'
 export const BRAND_COLOR = '#002E5D'
 /** Width and height of the square box BRAND_MARK_PATH is drawn in. */
